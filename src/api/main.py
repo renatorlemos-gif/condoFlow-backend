@@ -5,10 +5,11 @@ from src.utils.bradesco_parser import processar_extrato_bradesco_bytes
 
 app = FastAPI(title="CondoFlow API", version="1.0")
 
-# Configuração de CORS atualizada com o seu domínio atual da Vercel
+# Configuração de CORS atualizada
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://condo-flow-frontend.vercel.app",  # Seu domínio principal atual
         "https://condo-flow-three.vercel.app",
         "https://condo-flow-frontend-45obqgotq-rl-desk.vercel.app",
         "http://localhost:5173",
