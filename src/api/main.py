@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import io
@@ -20,20 +20,41 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-@app.post("/api/processar-extrato-bradesco")
-async def processar_extrato(file: UploadFile = File(...)):
+@app.post("/api/processar-extrato")
+async def processar_extrato(
+    file: UploadFile = File(...),
+    banco: str = Form(...)  # O front-end enviará 'bradesco' ou 'santander'
+):
     conteudo_bytes = await file.read()
+    nome_original = file.filename or "extrato.xlsx"
+    banco_normalizado = banco.strip().lower()
     
-    # Importação interna para evitar quebra caso o módulo demore a carregar
     try:
-        from src.utils.bradesco_parser import processar_extrato_bradesco_bytes
-        excel_io = processar_extrato_bradesco_bytes(conteudo_bytes)
-    except ImportError:
-        # Fallback temporário caso o caminho do utils seja diferente no seu repositório
-        excel_io = io.BytesIO(conteudo_bytes)
+        if banco_normalizado == "bradesco":
+            from src.utils.bradesco_parser import processar_extrato_bradesco_bytes
+            excel_io, nome_saida = processar_extrato_bradesco_bytes(conteudo_bytes, nome_original)
+        elif banco_normalizado == "santander":
+            from src.utils.santander_parser import processar_extrato_santander_bytes
+            excel_io, nome_saida = processar_extrato_santander_bytes(conteudo_bytes, nome_original)
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Banco inválido ou não suportado: '{banco}'. Utilize 'bradesco' ou 'santander'."
+            )
+            
+    except ImportError as ie:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erro de importação do parser para o banco {banco}: {str(ie)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erro ao processar o extrato: {str(e)}"
+        )
 
     return StreamingResponse(
         excel_io,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=extrato_consolidado_bradesco.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename={nome_saida}"}
     )

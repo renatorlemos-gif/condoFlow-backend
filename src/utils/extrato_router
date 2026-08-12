@@ -1,0 +1,13 @@
+import io
+from src.utils.bradesco_parser import processar_extrato_bradesco_bytes
+from src.utils.santander_parser import processar_extrato_santander_bytes
+
+def processar_extrato_geral(conteudo_bytes: bytes, nome_arquivo: str, banco: str) -> tuple[io.BytesIO, str]:
+    banco_normalizado = banco.strip().lower()
+    
+    if banco_normalizado == 'bradesco':
+        return processar_extrato_bradesco_bytes(conteudo_bytes, nome_arquivo)
+    elif banco_normalizado == 'santander':
+        return processar_extrato_santander_bytes(conteudo_bytes, nome_arquivo)
+    else:
+        raise ValueError(f"Banco não suportado ou inválido: '{banco}'. Utilize 'bradesco' ou 'santander'.")

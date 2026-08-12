@@ -3,10 +3,11 @@ import numpy as np
 import re
 import xlsxwriter
 import io
+import os
 import warnings
 warnings.filterwarnings('ignore')
 
-def processar_extrato_bradesco_bytes(conteudo_bytes: bytes) -> io.BytesIO:
+def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = "extrato.xlsx") -> tuple[io.BytesIO, str]:
     # Leitura direta do arquivo Excel gerado pelo Bradesco Net Empresa
     df_raw = pd.read_excel(io.BytesIO(conteudo_bytes))
     
@@ -124,7 +125,7 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes) -> io.BytesIO:
 
         categorias_ordem = ['Rentabilidades', 'Resgates', 'Aplicações', 'Tarifas', 'Receitas', 'Outras Receitas', 'Outros Gastos']
         linha_atual = 0 
-        resumo_totais = []
+        mapeamento_totais = {} # Dicionário para guardar a linha exata do total de cada categoria na aba Detalhado
 
         for cat in categorias_ordem:
             df_cat = df[df['Categoria'] == cat]
@@ -147,7 +148,6 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes) -> io.BytesIO:
                 val_cred = float(row_data.get('Crédito (R$)', 0.0))
                 val_deb = float(row_data.get('Débito (R$)', 0.0))
                 
-                # Aplica sinal negativo nos débitos da aba Detalhado
                 val_deb_negativo = -abs(val_deb) if val_deb > 0 else 0.0
                 
                 ws_det.write(linha_atual, 0, val_data, fmt_data)
@@ -158,16 +158,14 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes) -> io.BytesIO:
                 
             linha_fim = linha_atual
             
+            # Escreve a linha de total da categoria na aba Detalhado
             ws_det.write(linha_atual, 0, f'Total {cat}', fmt_total)
             ws_det.write(linha_atual, 1, '', fmt_total)
             ws_det.write_formula(linha_atual, 2, f'=SUM(C{linha_inicio}:C{linha_fim})', fmt_total)
             ws_det.write_formula(linha_atual, 3, f'=SUM(D{linha_inicio}:D{linha_fim})', fmt_total)
             
-            resumo_totais.append({
-                'Categoria': cat,
-                'Credito': float(df_cat['Crédito (R$)'].sum()),
-                'Debito': float(df_cat['Débito (R$)'].sum())
-            })
+            # Armazena o número da linha (1-indexed para o Excel) onde ficou o total desta categoria
+            mapeamento_totais[cat] = linha_atual + 1
             
             linha_atual += 2 
 
@@ -183,10 +181,19 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes) -> io.BytesIO:
         ws_cons.write('E2', float(saldo_anterior), fmt_moeda)
         
         linha_cons = 2 
-        for item in resumo_totais:
-            ws_cons.write(linha_cons, 0, f"Total {item['Categoria']}", fmt_cat)
-            ws_cons.write(linha_cons, 3, item['Credito'], fmt_moeda)
-            ws_cons.write(linha_cons, 4, -abs(item['Debito']), fmt_moeda) 
+        for cat in categorias_ordem:
+            if cat not in mapeamento_totais:
+                continue
+            
+            lin_det = mapeamento_totais[cat]
+            ws_cons.write(linha_cons, 0, f"Total {cat}", fmt_cat)
+            
+            # Referência cruzada dinâmica para a coluna de Crédito da aba Detalhado (Coluna C)
+            ws_cons.write_formula(linha_cons, 3, f"=Detalhado!C{lin_det}", fmt_moeda)
+            
+            # Referência cruzada dinâmica para a coluna de Débito da aba Detalhado (Coluna D)
+            ws_cons.write_formula(linha_cons, 4, f"=Detalhado!D{lin_det}", fmt_moeda)
+            
             linha_cons += 1
             
         n = linha_cons 
@@ -196,4 +203,8 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes) -> io.BytesIO:
         ws_cons.write_formula(linha_cons, 4, formula_final, fmt_total)
 
     output.seek(0)
-    return output
+    
+    nome_base, _ = os.path.splitext(os.path.basename(nome_arquivo))
+    nome_saida = f"{nome_base}_PROC.xlsx"
+    
+    return output, nome_saida
