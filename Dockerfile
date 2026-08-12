@@ -14,4 +14,5 @@ COPY . .
 
 EXPOSE 8000
 
-# Como o main.py está em src/api/main.py, o uvicorn deve apontar para lá:
+# Comando para iniciar o FastAPI via Uvicorn na porta dinâmica do Render
+CMD ["sh", "-c", "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
