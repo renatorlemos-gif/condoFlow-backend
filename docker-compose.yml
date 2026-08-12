@@ -1,0 +1,7 @@
+services:
+  backend:
+    build: .
+    container_name: condoflow-backend-container
+    ports:
+      - "8000:8000"
+    restart: always
