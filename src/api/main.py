@@ -3,6 +3,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import io
 
+from src.api.documento_router import router as documento_router
+
 app = FastAPI(title="CondoFlow API", version="1.0")
 
 # Configuração de CORS com regex para previews dinâmicos da Vercel
@@ -19,6 +21,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+# Inclusão dos novos endpoints para escaneamento e gestão de lote contábil
+app.include_router(documento_router)
 
 @app.post("/api/processar-extrato")
 async def processar_extrato(

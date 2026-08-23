@@ -3,5 +3,7 @@ services:
     build: .
     container_name: condoflow-backend-container
     ports:
-      - "8000:8000"
+      - "8000:10000"  # Mapeia a porta 8000 da sua máquina para a 10000 do contêiner
+    env_file:
+      - .env
     restart: always
