@@ -1,4 +1,5 @@
 import hashlib
+import os
 import re
 
 from fastapi import UploadFile
@@ -64,7 +65,9 @@ def parse_valor_brl(valor_str: str | None) -> float | None:
 
 class DocumentoParser:
     def __init__(self):
-        self.client = genai.Client()
+        # Força o uso explícito da API Key do ambiente para evitar conflitos com credenciais do Google Cloud
+        api_key = os.environ.get("GEMINI_API_KEY")
+        self.client = genai.Client(api_key=api_key)
 
     def calcular_hash(self, file_bytes: bytes) -> str:
         return hashlib.sha256(file_bytes).hexdigest()
