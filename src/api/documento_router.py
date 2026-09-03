@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from src.utils.documento_parser import DocumentoParser, DadosExtraidosDTO
 from src.utils.supabase_storage import upload_documento
+from src.utils.image_validator import validar_qualidade_imagem
 from src.services.conhecimento_service import ConhecimentoService, SugestaoContabilDTO
 from src.services.lote_service import LoteService, ItemLoteContabil
 
@@ -25,33 +26,58 @@ class UploadResponse(BaseModel):
     ok: bool
     path: str
     signed_url: str
-    pasta: str
+    bucket: str
     filename: str
+
+
+class QualidadeReprovadaResponse(BaseModel):
+    ok: bool
+    motivo: str
 
 
 # ------------------------------------------------------------------ #
 #  Endpoints                                                          #
 # ------------------------------------------------------------------ #
 
-@router.post("/upload", response_model=UploadResponse)
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    responses={422: {"model": QualidadeReprovadaResponse, "description": "Imagem com qualidade insuficiente"}},
+)
 async def upload_documento_fiscal(
     file: UploadFile = File(...),
 ):
     """
-    Recebe uma foto ou PDF de documento fiscal e salva no Supabase Storage
-    (bucket `documentos`) com um nome contextualizado:
+    Recebe uma foto ou PDF de documento fiscal.
 
-        {condo-slug}_{YYYY-MM-DD}_{uuid}_{filename_original}
+    Fluxo:
+    1. Valida qualidade da imagem via Gemini (PDFs são aprovados automaticamente)
+    2. Se aprovada: salva no Supabase Storage (bucket condominios / documentos/)
+    3. Se reprovada: retorna 422 com o motivo — nenhum arquivo é salvo
 
-    Retorna imediatamente após o upload — o celular já pode fotografar
-    o próximo documento.
+    Nome do arquivo no storage:
+        {condo-slug}_{YYYY-MM-DD}_{uuid8}_{filename_original}
 
     A extração de dados (Gemini) e persistência no banco serão adicionadas
     em segundo plano quando o schema do banco estiver definido.
     """
-    conteudo   = await file.read()
-    filename   = file.filename or "documento"
-    mime_type  = file.content_type or "application/octet-stream"
+    conteudo  = await file.read()
+    filename  = file.filename or "documento"
+    mime_type = file.content_type or "application/octet-stream"
+
+    # 1. Validação de qualidade
+    try:
+        validacao = validar_qualidade_imagem(conteudo, mime_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro na validação de qualidade: {str(e)}")
+
+    if not validacao.aprovada:
+        raise HTTPException(
+            status_code=422,
+            detail=validacao.motivo or "Imagem com qualidade insuficiente para extração de dados.",
+        )
+
+    # 2. Upload para o Supabase
     condo_nome = os.environ.get("CONDO_NOME", "Condominio")
 
     try:
@@ -70,7 +96,7 @@ async def upload_documento_fiscal(
         ok=True,
         path=resultado["path"],
         signed_url=resultado["signed_url"],
-        pasta=resultado["pasta"],
+        bucket=resultado["bucket"],
         filename=filename,
     )
 
