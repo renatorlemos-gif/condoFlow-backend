@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.documento_router import router as documento_router
+from src.api.validacao_router import router as validacao_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -45,6 +46,7 @@ app.add_middleware(
 #  Routers                                                            #
 # ------------------------------------------------------------------ #
 app.include_router(documento_router)
+app.include_router(validacao_router)
 
 
 # ------------------------------------------------------------------ #
@@ -65,8 +67,8 @@ async def processar_extrato(
     file: UploadFile = File(...),
     banco: str = Form(...),
 ):
-    conteudo_bytes   = await file.read()
-    nome_original    = file.filename or "extrato.xlsx"
+    conteudo_bytes    = await file.read()
+    nome_original     = file.filename or "extrato.xlsx"
     banco_normalizado = banco.strip().lower()
 
     try:
@@ -79,7 +81,7 @@ async def processar_extrato(
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Banco inválido ou não suportado: '{banco}'. Utilize 'bradesco' ou 'santander'."
+                detail=f"Banco inválido: '{banco}'. Use 'bradesco' ou 'santander'.",
             )
     except ImportError as ie:
         raise HTTPException(status_code=500, detail=f"Erro de importação do parser: {str(ie)}")
