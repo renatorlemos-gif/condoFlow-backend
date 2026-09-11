@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.documento_router import router as documento_router
 from src.api.validacao_router import router as validacao_router
+from src.api.conciliacao_router import router as conciliacao_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -47,6 +48,7 @@ app.add_middleware(
 # ------------------------------------------------------------------ #
 app.include_router(documento_router)
 app.include_router(validacao_router)
+app.include_router(conciliacao_router)
 
 
 # ------------------------------------------------------------------ #
@@ -61,30 +63,28 @@ async def startup_event():
 
 # ------------------------------------------------------------------ #
 #  Processar Extrato Bancário                                         #
+#  Agora persiste no banco + Storage além de gerar o XLSX             #
 # ------------------------------------------------------------------ #
 @app.post("/api/processar-extrato")
 async def processar_extrato(
     file: UploadFile = File(...),
     banco: str = Form(...),
 ):
-    conteudo_bytes    = await file.read()
-    nome_original     = file.filename or "extrato.xlsx"
-    banco_normalizado = banco.strip().lower()
+    conteudo_bytes = await file.read()
+    nome_original  = file.filename or "extrato.xlsx"
+    condo_nome     = os.environ.get("CONDO_NOME", "Condominio")
 
     try:
-        if banco_normalizado == "bradesco":
-            from src.utils.bradesco_parser import processar_extrato_bradesco_bytes
-            excel_io, nome_saida = processar_extrato_bradesco_bytes(conteudo_bytes, nome_original)
-        elif banco_normalizado == "santander":
-            from src.utils.santander_parser import processar_extrato_santander_bytes
-            excel_io, nome_saida = processar_extrato_santander_bytes(conteudo_bytes, nome_original)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Banco inválido: '{banco}'. Use 'bradesco' ou 'santander'.",
-            )
-    except ImportError as ie:
-        raise HTTPException(status_code=500, detail=f"Erro de importação do parser: {str(ie)}")
+        from src.services.extrato_service import processar_e_persistir
+        excel_io, nome_saida, qtd_transacoes = await processar_e_persistir(
+            conteudo_bytes=conteudo_bytes,
+            nome_arquivo=nome_original,
+            banco=banco,
+            condo_nome=condo_nome,
+        )
+        logger.info(f"Extrato processado: {qtd_transacoes} transações salvas no banco.")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao processar o extrato: {str(e)}")
 

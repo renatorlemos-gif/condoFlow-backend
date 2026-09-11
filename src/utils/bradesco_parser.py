@@ -7,11 +7,13 @@ import os
 import warnings
 warnings.filterwarnings('ignore')
 
-def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = "extrato.xlsx") -> tuple[io.BytesIO, str]:
-    # Leitura direta do arquivo Excel gerado pelo Bradesco Net Empresa
+def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = "extrato.xlsx") -> tuple:
+    """
+    Retorna (df, excel_io, nome_saida) — o DataFrame intermediário é usado pelo
+    extrato_service para persistir as transações no banco.
+    """
     df_raw = pd.read_excel(io.BytesIO(conteudo_bytes))
     
-    # O extrato do Bradesco Net Empresa sempre possui o cabeçalho na linha 7 (índice 7)
     header_idx = 7
     if header_idx >= len(df_raw):
         header_idx = 0
@@ -21,7 +23,6 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
                 header_idx = idx
                 break
 
-    # Extração segura do Saldo Anterior
     saldo_anterior = 0.0
     for idx in range(header_idx, min(header_idx + 5, len(df_raw))):
         row_str = ' '.join([str(val) for val in df_raw.iloc[idx].values]).upper()
@@ -32,12 +33,10 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
                 saldo_anterior = float(val_str)
             break
 
-    # Montagem do DataFrame a partir do cabeçalho
     df = df_raw.iloc[header_idx + 1:].copy()
     df.columns = [str(c).strip() for c in df_raw.iloc[header_idx].values]
     df = df.reset_index(drop=True)
 
-    # Padronização garantida das colunas principais baseada nas posições do Bradesco
     cols = list(df.columns)
     col_map = {}
     if len(cols) > 0: col_map[cols[0]] = 'Data'
@@ -48,7 +47,6 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
     df = df.rename(columns=col_map)
     df = df.dropna(subset=['Data'])
 
-    # Limpeza de valores numéricos
     def limpar_valor(val):
         if pd.isna(val): return 0.0
         v_str = str(val).strip().replace('.', '').replace(',', '.')
@@ -67,7 +65,6 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
     else:
         df['Débito (R$)'] = 0.0
 
-    # Validação de datas válidas (formato DD/MM/AAAA)
     def parse_data(d):
         if pd.isna(d): return None
         match = re.search(r'(\d{2}/\d{2}/\d{4})', str(d).strip())
@@ -76,42 +73,34 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
     df['Data_Valida'] = df['Data'].apply(parse_data)
     df = df.dropna(subset=['Data_Valida'])
 
-    # Excluir linhas indesejadas (Saldo Anterior, Totais, etc.)
     if 'Lançamento' in df.columns:
         lancamentos_str = df['Lançamento'].fillna('').astype(str).str.upper()
         termos_excluir = ['TOTAL', 'SALDO ANTERIOR', 'SALDO']
         mascara_exclusao = lancamentos_str.apply(lambda x: not any(t in x for t in termos_excluir))
         df = df[mascara_exclusao]
 
-    # Filtrar pelo mês principal para isolar o extrato do mês vigente
     if not df.empty and 'Data_Valida' in df.columns:
         df['Mes_Ano'] = df['Data_Valida'].apply(lambda x: str(x)[3:])
         if not df['Mes_Ano'].empty:
             mes_principal = df['Mes_Ano'].mode()[0]
             df = df[df['Mes_Ano'] == mes_principal]
 
-    # 3. CATEGORIZAÇÃO
     def classificar(linha):
         hist = str(linha.get('Lançamento', '')).upper()
         cred = linha.get('Crédito (R$)', 0.0)
-        
         if any(x in hist for x in ['RENTAB', 'INVEST']): return 'Rentabilidades'
         if any(x in hist for x in ['RESG/']): return 'Resgates'
         if any(x in hist for x in ['APLICACAO', 'APLIC/', 'APLIC ']): return 'Aplicações'
         if any(x in hist for x in ['TARIFA', 'TAR ', 'IOF']): return 'Tarifas'
         if 'LIQUIDACAO DE COBRANCA' in hist: return 'Receitas'
-        
         if cred > 0: return 'Outras Receitas'
         return 'Outros Gastos'
 
     df['Categoria'] = df.apply(classificar, axis=1)
 
-    # 4. GERAÇÃO DO ARQUIVO EXCEL CONSOLIDADO EM MEMÓRIA
     output = io.BytesIO()
-    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
-        
         fmt_header = workbook.add_format({'bold': True, 'bg_color': '#4F81BD', 'font_color': 'white', 'border': 1})
         fmt_cat = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1})
         fmt_total = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'num_format': '#,##0.00'})
@@ -124,87 +113,63 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
         ws_det.set_column('C:D', 18)
 
         categorias_ordem = ['Rentabilidades', 'Resgates', 'Aplicações', 'Tarifas', 'Receitas', 'Outras Receitas', 'Outros Gastos']
-        linha_atual = 0 
-        mapeamento_totais = {} # Dicionário para guardar a linha exata do total de cada categoria na aba Detalhado
+        linha_atual = 0
+        mapeamento_totais = {}
 
         for cat in categorias_ordem:
             df_cat = df[df['Categoria'] == cat]
             if df_cat.empty: continue
-                
             ws_det.merge_range(linha_atual, 0, linha_atual, 3, cat, fmt_cat)
             linha_atual += 1
-            
             ws_det.write(linha_atual, 0, 'Data', fmt_header)
             ws_det.write(linha_atual, 1, 'Lançamento', fmt_header)
             ws_det.write(linha_atual, 2, 'Crédito (R$)', fmt_header)
             ws_det.write(linha_atual, 3, 'Débito (R$)', fmt_header)
             linha_atual += 1
-            
-            linha_inicio = linha_atual + 1 
-            
+            linha_inicio = linha_atual + 1
             for _, row_data in df_cat.iterrows():
                 val_data = str(row_data.get('Data_Valida', ''))
                 val_lanc = str(row_data.get('Lançamento', ''))
                 val_cred = float(row_data.get('Crédito (R$)', 0.0))
                 val_deb = float(row_data.get('Débito (R$)', 0.0))
-                
                 val_deb_negativo = -abs(val_deb) if val_deb > 0 else 0.0
-                
                 ws_det.write(linha_atual, 0, val_data, fmt_data)
                 ws_det.write(linha_atual, 1, val_lanc)
                 ws_det.write(linha_atual, 2, val_cred, fmt_moeda)
                 ws_det.write(linha_atual, 3, val_deb_negativo, fmt_moeda)
                 linha_atual += 1
-                
             linha_fim = linha_atual
-            
-            # Escreve a linha de total da categoria na aba Detalhado
             ws_det.write(linha_atual, 0, f'Total {cat}', fmt_total)
             ws_det.write(linha_atual, 1, '', fmt_total)
             ws_det.write_formula(linha_atual, 2, f'=SUM(C{linha_inicio}:C{linha_fim})', fmt_total)
             ws_det.write_formula(linha_atual, 3, f'=SUM(D{linha_inicio}:D{linha_fim})', fmt_total)
-            
-            # Armazena o número da linha (1-indexed para o Excel) onde ficou o total desta categoria
             mapeamento_totais[cat] = linha_atual + 1
-            
-            linha_atual += 2 
+            linha_atual += 2
 
         ws_cons = workbook.add_worksheet('Consolidado')
         ws_cons.set_column('A:A', 35)
         ws_cons.set_column('D:E', 20)
-        
         ws_cons.write('A1', 'Categoria', fmt_header)
         ws_cons.write('D1', 'Crédito (R$)', fmt_header)
         ws_cons.write('E1', 'Débito (R$)', fmt_header)
-        
         ws_cons.write('A2', 'Saldo Anterior', fmt_cat)
         ws_cons.write('E2', float(saldo_anterior), fmt_moeda)
-        
-        linha_cons = 2 
+        linha_cons = 2
         for cat in categorias_ordem:
-            if cat not in mapeamento_totais:
-                continue
-            
+            if cat not in mapeamento_totais: continue
             lin_det = mapeamento_totais[cat]
             ws_cons.write(linha_cons, 0, f"Total {cat}", fmt_cat)
-            
-            # Referência cruzada dinâmica para a coluna de Crédito da aba Detalhado (Coluna C)
             ws_cons.write_formula(linha_cons, 3, f"=Detalhado!C{lin_det}", fmt_moeda)
-            
-            # Referência cruzada dinâmica para a coluna de Débito da aba Detalhado (Coluna D)
             ws_cons.write_formula(linha_cons, 4, f"=Detalhado!D{lin_det}", fmt_moeda)
-            
             linha_cons += 1
-            
-        n = linha_cons 
-        
+        n = linha_cons
         ws_cons.write(linha_cons, 0, 'Saldo Final', fmt_total)
         formula_final = f'=E2 + (SUM(D3:D{n}) - (SUM(E3:E{n})*-1))'
         ws_cons.write_formula(linha_cons, 4, formula_final, fmt_total)
 
     output.seek(0)
-    
     nome_base, _ = os.path.splitext(os.path.basename(nome_arquivo))
     nome_saida = f"{nome_base}_PROC.xlsx"
-    
-    return output, nome_saida
+
+    # Retorna df junto com o Excel para o extrato_service persistir no banco
+    return df, output, nome_saida
