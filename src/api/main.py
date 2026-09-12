@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.documento_router import router as documento_router
 from src.api.validacao_router import router as validacao_router
 from src.api.conciliacao_router import router as conciliacao_router
+from src.api.contexto_router import router as contexto_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -49,6 +50,7 @@ app.add_middleware(
 app.include_router(documento_router)
 app.include_router(validacao_router)
 app.include_router(conciliacao_router)
+app.include_router(contexto_router)
 
 
 # ------------------------------------------------------------------ #
@@ -63,16 +65,19 @@ async def startup_event():
 
 # ------------------------------------------------------------------ #
 #  Processar Extrato Bancário                                         #
-#  Agora persiste no banco + Storage além de gerar o XLSX             #
+#  Persiste no banco com isolamento por Administradora e Condomínio   #
 # ------------------------------------------------------------------ #
 @app.post("/api/processar-extrato")
 async def processar_extrato(
     file: UploadFile = File(...),
     banco: str = Form(...),
+    administradora_id: str = Form("adm-alpha"),
+    condominio_id: str = Form("condo-alpha-01"),
+    condo_nome: str = Form(None),
 ):
     conteudo_bytes = await file.read()
     nome_original  = file.filename or "extrato.xlsx"
-    condo_nome     = os.environ.get("CONDO_NOME", "Condominio")
+    condo_nome_final = condo_nome or os.environ.get("CONDO_NOME", "Condominio")
 
     try:
         from src.services.extrato_service import processar_e_persistir
@@ -80,9 +85,11 @@ async def processar_extrato(
             conteudo_bytes=conteudo_bytes,
             nome_arquivo=nome_original,
             banco=banco,
-            condo_nome=condo_nome,
+            condo_nome=condo_nome_final,
+            administradora_id=administradora_id,
+            condominio_id=condominio_id,
         )
-        logger.info(f"Extrato processado: {qtd_transacoes} transações salvas no banco.")
+        logger.info(f"Extrato processado: {qtd_transacoes} transações salvas no banco (Condomínio: {condominio_id}).")
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
