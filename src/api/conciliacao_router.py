@@ -4,13 +4,14 @@ conciliacao_router.py
 Endpoints para a tela de conciliação bancária.
 
 GET  /api/v1/conciliacao/transacoes          — lista transações com sugestão de documento
-POST /api/v1/conciliacao/conciliar           — confirma um par transação ↔ documento
-DELETE /api/v1/conciliacao/{id}              — desfaz uma conciliação
+POST /api/v1/conciliacao/conciliar           — confirma pares transação ↔ documento (suporta N x N)
+DELETE /api/v1/conciliacao/{id}              — desfaz uma conciliação (estorna lotes inteiros se agrupada)
 GET  /api/v1/conciliacao/documentos-disponiveis — documentos validados ainda não conciliados
 """
 
 import os
-from datetime import datetime, timezone, timedelta
+import uuid
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -38,29 +39,35 @@ class DocumentoSugestao(BaseModel):
     numero_doc: str | None
     data_emissao: str | None
     valor_total: float | None
-    score: float  # 0-1, confiança da sugestão
+    score: float
+
+
+class DocumentoConciliadoInfo(BaseModel):
+    id: str
+    fornecedor: str | None
+    valor: float | None
+    conciliacao_id: str
 
 
 class TransacaoComSugestao(BaseModel):
     id: str
     data_transacao: str
-    descricao: str | None
+    descricao: str | None = None
     valor: float
     tipo: str
     banco: str
     condo_nome: str
-    conciliacao_id: str | None      # preenchido se já conciliada
-    documento_id: str | None        # preenchido se já conciliada
-    documento_fornecedor: str | None
-    documento_valor: float | None
-    status_conciliacao: Literal["conciliada", "sugerida", "pendente"]
-    sugestao: DocumentoSugestao | None
+    
+    documentos_conciliados: list[DocumentoConciliadoInfo] = []
+    status_conciliacao: Literal["conciliada", "conciliada_em_lote", "sugerida", "pendente"]
+    sugestao: DocumentoSugestao | None = None
+    lote_id: str | None = None
 
 
 class ConciliarPayload(BaseModel):
-    transacao_id: str
-    documento_id: str
-    status: Literal["automatica", "manual"] = "manual"
+    transacoes_ids: list[str]
+    documentos_ids: list[str]
+    status: Literal["automatica", "manual", "lote"] = "manual"
 
 
 class ConciliarResponse(BaseModel):
@@ -82,15 +89,7 @@ class DocumentoDisponivel(BaseModel):
 # ------------------------------------------------------------------ #
 
 def _calcular_score(transacao: dict, documento: dict) -> float:
-    """
-    Calcula score de 0-1 para o par transação ↔ documento.
-    Critérios:
-    - Valor igual: +0.6
-    - Data da transação dentro de 30 dias da emissão: +0.3 (decai com distância)
-    - Tipo débito (pagamento): +0.1
-    """
     score = 0.0
-
     val_trans = float(transacao.get("valor") or 0)
     val_doc   = float(documento.get("valor_total") or 0)
 
@@ -98,7 +97,7 @@ def _calcular_score(transacao: dict, documento: dict) -> float:
         if abs(val_trans - val_doc) < 0.01:
             score += 0.6
         elif abs(val_trans - val_doc) / max(val_trans, val_doc) < 0.05:
-            score += 0.3  # diferença menor que 5%
+            score += 0.3
 
     data_trans_str = transacao.get("data_transacao")
     data_doc_str   = documento.get("data_emissao")
@@ -123,7 +122,6 @@ def _calcular_score(transacao: dict, documento: dict) -> float:
 
 
 def _buscar_sugestao(transacao: dict, documentos: list[dict]) -> DocumentoSugestao | None:
-    """Retorna o melhor documento candidato com score >= 0.6, ou None."""
     melhor = None
     melhor_score = 0.0
 
@@ -151,38 +149,28 @@ def _buscar_sugestao(transacao: dict, documentos: list[dict]) -> DocumentoSugest
 
 @router.get("/transacoes", response_model=list[TransacaoComSugestao])
 async def listar_transacoes(
-    mes_ano: str | None = None,   # formato: "2026-08"
+    mes_ano: str | None = None,
     banco: str | None = None,
     apenas_pendentes: bool = True,
     limit: int = 100,
 ):
-    """
-    Lista transações do extrato com sugestão automática de documento.
-    Filtra por mês/ano (ex: 2026-08) e banco opcionalmente.
-    """
     supabase = _get_supabase()
 
-    # Busca transações
-    query = (
-        supabase.table("transacoes_extrato")
-        .select("*")
-        .order("data_transacao", desc=True)
-        .limit(limit)
-    )
+    query = supabase.table("transacoes_extrato").select("*").order("data_transacao", desc=True).limit(limit)
     if banco:
         query = query.eq("banco", banco)
     if mes_ano:
+        import calendar
         inicio = f"{mes_ano}-01"
-        ano, mes = mes_ano.split("-")
-        ultimo_dia = 31
-        fim = f"{mes_ano}-{ultimo_dia}"
+        ano, mes = map(int, mes_ano.split("-"))
+        _, ultimo_dia = calendar.monthrange(ano, mes)
+        fim = f"{mes_ano}-{ultimo_dia:02d}"
         query = query.gte("data_transacao", inicio).lte("data_transacao", fim)
 
     transacoes = query.execute().data or []
-
-    # Busca conciliações já existentes
     trans_ids = [t["id"] for t in transacoes]
-    conciliacoes = {}
+
+    conciliacoes_por_trans = {}
     if trans_ids:
         conc_result = (
             supabase.table("conciliacoes")
@@ -191,9 +179,11 @@ async def listar_transacoes(
             .execute()
         )
         for c in (conc_result.data or []):
-            conciliacoes[c["transacao_id"]] = c
+            tid = c["transacao_id"]
+            if tid not in conciliacoes_por_trans:
+                conciliacoes_por_trans[tid] = []
+            conciliacoes_por_trans[tid].append(c)
 
-    # Busca documentos disponíveis para sugestão (validados, não conciliados)
     docs_result = (
         supabase.table("documentos_fiscais")
         .select("id, fornecedor, numero_doc, data_emissao, valor_total")
@@ -202,50 +192,59 @@ async def listar_transacoes(
     )
     docs_disponiveis = docs_result.data or []
 
-    # IDs já conciliados (não podem ser sugeridos novamente)
-    docs_ja_conciliados = {c.get("documento_id") for c in conciliacoes.values()}
+    # Get already conciliados docs to remove from suggestions
+    all_conc = supabase.table("conciliacoes").select("documento_id").execute().data or []
+    docs_ja_conciliados = {c.get("documento_id") for c in all_conc}
     docs_livres = [d for d in docs_disponiveis if d["id"] not in docs_ja_conciliados]
 
     resultado = []
     for trans in transacoes:
-        conc = conciliacoes.get(trans["id"])
+        concs = conciliacoes_por_trans.get(trans["id"], [])
+        
+        if concs:
+            docs_info = []
+            lote_id = None
+            is_lote = False
+            for c in concs:
+                doc_data = c.get("documentos_fiscais") or {}
+                docs_info.append(DocumentoConciliadoInfo(
+                    id=c["documento_id"],
+                    fornecedor=doc_data.get("fornecedor"),
+                    valor=doc_data.get("valor_total"),
+                    conciliacao_id=c["id"]
+                ))
+                if str(c.get("status", "")).startswith("lote_"):
+                    is_lote = True
+                    lote_id = c["status"]
 
-        if conc:
-            doc_info = conc.get("documentos_fiscais") or {}
+            # If there's multiple conciliations for this transaction, it's also a lote
+            if len(concs) > 1:
+                is_lote = True
+                
             resultado.append(TransacaoComSugestao(
-                **{k: trans[k] for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]},
-                conciliacao_id=conc["id"],
-                documento_id=conc["documento_id"],
-                documento_fornecedor=doc_info.get("fornecedor"),
-                documento_valor=doc_info.get("valor_total"),
-                status_conciliacao="conciliada",
+                **{k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]},
+                documentos_conciliados=docs_info,
+                status_conciliacao="conciliada_em_lote" if is_lote else "conciliada",
                 sugestao=None,
+                lote_id=lote_id if is_lote else None,
             ))
         else:
-            if apenas_pendentes is False or True:  # sempre inclui por ora
-                sugestao = _buscar_sugestao(trans, docs_livres)
-                resultado.append(TransacaoComSugestao(
-                    **{k: trans[k] for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]},
-                    conciliacao_id=None,
-                    documento_id=None,
-                    documento_fornecedor=None,
-                    documento_valor=None,
-                    status_conciliacao="sugerida" if sugestao else "pendente",
-                    sugestao=sugestao,
-                ))
+            sugestao = _buscar_sugestao(trans, docs_livres)
+            resultado.append(TransacaoComSugestao(
+                **{k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]},
+                documentos_conciliados=[],
+                status_conciliacao="sugerida" if sugestao else "pendente",
+                sugestao=sugestao,
+                lote_id=None,
+            ))
 
     return resultado
 
 
 @router.get("/documentos-disponiveis", response_model=list[DocumentoDisponivel])
 async def documentos_disponiveis(q: str | None = None):
-    """
-    Lista documentos validados ainda não conciliados.
-    Aceita filtro de texto livre (q) para busca por fornecedor/número.
-    """
     supabase = _get_supabase()
 
-    # IDs já conciliados
     conc = supabase.table("conciliacoes").select("documento_id").execute()
     ids_conciliados = {c["documento_id"] for c in (conc.data or [])}
 
@@ -258,7 +257,6 @@ async def documentos_disponiveis(q: str | None = None):
         .execute()
         .data or []
     )
-
     docs = [d for d in docs if d["id"] not in ids_conciliados]
 
     if q:
@@ -274,64 +272,116 @@ async def documentos_disponiveis(q: str | None = None):
 
 @router.post("/conciliar", response_model=ConciliarResponse)
 async def conciliar(payload: ConciliarPayload):
-    """
-    Registra a conciliação de uma transação com um documento fiscal.
-    Atualiza o status do documento para "conciliado".
-    """
     supabase = _get_supabase()
 
-    # Verifica se já existe conciliação para essa transação
-    existente = (
+    if not payload.transacoes_ids or not payload.documentos_ids:
+        raise HTTPException(status_code=400, detail="É necessário ao menos uma transação e um documento.")
+
+    # Verifica se alguma transação já está conciliada
+    existentes = (
         supabase.table("conciliacoes")
         .select("id")
-        .eq("transacao_id", payload.transacao_id)
+        .in_("transacao_id", payload.transacoes_ids)
         .execute()
     )
-    if existente.data:
+    if existentes.data:
         raise HTTPException(
             status_code=400,
-            detail="Esta transação já está conciliada. Desfaça a conciliação atual antes de criar uma nova.",
+            detail="Uma ou mais transações selecionadas já estão conciliadas."
         )
 
-    # Insere a conciliação
-    result = supabase.table("conciliacoes").insert({
-        "transacao_id":  payload.transacao_id,
-        "documento_id":  payload.documento_id,
-        "status":        payload.status,
-        "conciliado_em": datetime.now(timezone.utc).isoformat(),
-        "conciliado_por": "sistema" if payload.status == "automatica" else "usuaria",
-    }).execute()
+    # Verifica se algum documento já está conciliado
+    docs_existentes = (
+        supabase.table("conciliacoes")
+        .select("id")
+        .in_("documento_id", payload.documentos_ids)
+        .execute()
+    )
+    if docs_existentes.data:
+        raise HTTPException(
+            status_code=400,
+            detail="Um ou mais documentos selecionados já estão conciliados."
+        )
 
-    conciliacao_id = result.data[0]["id"]
+    # Busca valores para validar Delta Zero
+    trans_data = supabase.table("transacoes_extrato").select("valor").in_("id", payload.transacoes_ids).execute().data or []
+    docs_data = supabase.table("documentos_fiscais").select("valor_total").in_("id", payload.documentos_ids).execute().data or []
 
-    # Atualiza status do documento para "conciliado"
-    supabase.table("documentos_fiscais").update({
-        "status": "conciliado"
-    }).eq("id", payload.documento_id).execute()
+    total_trans = sum(float(t.get("valor") or 0) for t in trans_data)
+    total_docs = sum(float(d.get("valor_total") or 0) for d in docs_data)
 
-    return ConciliarResponse(ok=True, conciliacao_id=conciliacao_id)
+    diferenca = abs(total_trans - total_docs)
+    
+    # Tolerância de R$ 0,05 para divergências de centavos (RNF-03)
+    if diferenca > 0.05:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Diferença contábil de R$ {diferenca:.2f} excede a tolerância. A soma de transações deve ser igual aos documentos."
+        )
+
+    # Criação do Lote / Associação N x N
+    is_lote = len(payload.transacoes_ids) > 1 or len(payload.documentos_ids) > 1
+    lote_id = f"lote_{uuid.uuid4().hex[:8]}"
+    status_str = lote_id if is_lote else payload.status
+
+    inserts = []
+    for t_id in payload.transacoes_ids:
+        for d_id in payload.documentos_ids:
+            inserts.append({
+                "transacao_id": t_id,
+                "documento_id": d_id,
+                "status": status_str,
+                "conciliado_em": datetime.now(timezone.utc).isoformat(),
+                "conciliado_por": "sistema" if payload.status == "automatica" else "usuaria",
+            })
+
+    result = supabase.table("conciliacoes").insert(inserts).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Erro ao inserir conciliação.")
+
+    conciliacao_id_ref = result.data[0]["id"]
+
+    # Atualiza documentos
+    supabase.table("documentos_fiscais").update({"status": "conciliado"}).in_("id", payload.documentos_ids).execute()
+
+    return ConciliarResponse(ok=True, conciliacao_id=lote_id if is_lote else conciliacao_id_ref)
 
 
 @router.delete("/{conciliacao_id}")
 async def desfazer_conciliacao(conciliacao_id: str):
-    """
-    Desfaz uma conciliação: remove o registro e volta o documento
-    para status "validado".
-    """
     supabase = _get_supabase()
 
-    conc = (
-        supabase.table("conciliacoes")
-        .select("documento_id")
-        .eq("id", conciliacao_id)
-        .single()
-        .execute()
-    )
+    # Verifica se está passando um ID de lote (prefixado com lote_)
+    if conciliacao_id.startswith("lote_"):
+        # Desfaz todo o lote
+        conc_lote = supabase.table("conciliacoes").select("documento_id").eq("status", conciliacao_id).execute().data or []
+        if not conc_lote:
+            raise HTTPException(status_code=404, detail="Lote de conciliação não encontrado.")
+            
+        doc_ids = list({c["documento_id"] for c in conc_lote})
+        
+        supabase.table("conciliacoes").delete().eq("status", conciliacao_id).execute()
+        supabase.table("documentos_fiscais").update({"status": "validado"}).in_("id", doc_ids).execute()
+        return {"ok": True, "lote_desfeito": True}
+
+    # Desfaz conciliação individual
+    conc = supabase.table("conciliacoes").select("documento_id, status, transacao_id").eq("id", conciliacao_id).execute()
     if not conc.data:
         raise HTTPException(status_code=404, detail="Conciliação não encontrada.")
 
-    documento_id = conc.data["documento_id"]
+    registro = conc.data[0]
+    
+    # Se na verdade era parte de um lote via ID direto, vamos estornar o lote todo para evitar inconsistências
+    if str(registro.get("status", "")).startswith("lote_"):
+        lote_str = registro["status"]
+        conc_lote = supabase.table("conciliacoes").select("documento_id").eq("status", lote_str).execute().data or []
+        doc_ids = list({c["documento_id"] for c in conc_lote})
+        supabase.table("conciliacoes").delete().eq("status", lote_str).execute()
+        supabase.table("documentos_fiscais").update({"status": "validado"}).in_("id", doc_ids).execute()
+        return {"ok": True, "lote_desfeito": True, "obs": "A conciliação fazia parte de um lote, que foi totalmente desfeito."}
 
+    # Estorno normal 1x1
+    documento_id = registro["documento_id"]
     supabase.table("conciliacoes").delete().eq("id", conciliacao_id).execute()
     supabase.table("documentos_fiscais").update({"status": "validado"}).eq("id", documento_id).execute()
 
