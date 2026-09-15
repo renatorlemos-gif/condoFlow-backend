@@ -1,2 +1,11 @@
 .env
 frontend/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/

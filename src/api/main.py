@@ -10,6 +10,11 @@ from src.api.documento_router import router as documento_router
 from src.api.validacao_router import router as validacao_router
 from src.api.conciliacao_router import router as conciliacao_router
 from src.api.contexto_router import router as contexto_router
+from src.api.plano_contas_router import router as plano_contas_router
+from src.api.balancete_router import router as balancete_router
+from src.api.classificacao_router import router as classificacao_router
+from src.api.exportacao_router import router as exportacao_router
+from src.api.cadastros_router import router as cadastros_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -51,6 +56,11 @@ app.include_router(documento_router)
 app.include_router(validacao_router)
 app.include_router(conciliacao_router)
 app.include_router(contexto_router)
+app.include_router(plano_contas_router)
+app.include_router(balancete_router)
+app.include_router(classificacao_router)
+app.include_router(exportacao_router)
+app.include_router(cadastros_router)
 
 
 # ------------------------------------------------------------------ #

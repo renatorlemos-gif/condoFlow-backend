@@ -81,19 +81,49 @@ async def _processar_documento(supabase, doc: dict) -> None:
         # Remove arquivo temporário
         os.unlink(tmp_path)
 
-        # Monta sugestão contábil — importa o serviço de conhecimento
-        from src.services.conhecimento_service import ConhecimentoService
-        conhecimento = ConhecimentoService()
-        sugestao = await conhecimento.gerar_sugestao(dados, doc.get("condo_nome", ""))
+        # 2. Busca Regra Fixa no BD
+        regra = None
+        if dados.nome_fornecedor:
+            res_regra = supabase.table("regras_contabeis").select("*").ilike("fornecedor_nome", f"%{dados.nome_fornecedor}%").limit(1).execute()
+            if res_regra.data:
+                regra = res_regra.data[0]
+        
+        conta_codigo = None
+        historico_sugerido = f"Vlr. ref. {dados.descricao or 'serviços prestados'} - {dados.nome_fornecedor or ''}"
+        
+        if regra:
+            conta_codigo = regra["conta_codigo"]
+            score = 0.95
+        else:
+            # 3. Se não achar, usa gemini-3.5-flash passando histórico/plano
+            try:
+                from google import genai
+                client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+                prompt_classificacao = f"Você é um assistente contábil. Dado o fornecedor '{dados.nome_fornecedor}' e descrição '{dados.descricao}', sugira APENAS o código da conta contábil mais apropriada (ex: '3.1.09.99'). Se não tiver certeza, retorne '3.1.09.99'."
+                resp = client.models.generate_content(
+                    model="gemini-3.5-flash-lite",
+                    contents=[prompt_classificacao]
+                )
+                conta_codigo = resp.text.strip()
+                score = 0.70
+            except Exception as e:
+                logger.error(f"Erro no motor de classificação Gemini: {e}")
+                conta_codigo = "3.1.09.99"
+                score = 0.50
 
         sugestao_json = {
-            "conta_debito_codigo":  sugestao.conta_debito_codigo,
-            "conta_debito_nome":    sugestao.conta_debito_nome,
-            "conta_credito_codigo": sugestao.conta_credito_codigo,
-            "conta_credito_nome":   sugestao.conta_credito_nome,
-            "historico_sugerido":   sugestao.historico_sugerido,
-            "score_confianca":      sugestao.score_confianca,
+            "conta_debito_codigo":  conta_codigo,
+            "conta_debito_nome":    "Conta Classificada",
+            "conta_credito_codigo": "1.1.01.02",
+            "conta_credito_nome":   "Banco Conta Movimento",
+            "historico_sugerido":   historico_sugerido,
+            "score_confianca":      score,
         }
+
+        def _clean_date(d):
+            if not d or str(d).lower().strip() in ("null", "none", ""):
+                return None
+            return d
 
         # Atualiza o registro no banco
         supabase.table("documentos_fiscais").update({
@@ -101,9 +131,9 @@ async def _processar_documento(supabase, doc: dict) -> None:
             "fornecedor":        dados.nome_fornecedor,
             "cnpj_cpf":          dados.cnpj_cpf_fornecedor,
             "numero_doc":        dados.numero_documento,
-            "data_emissao":      dados.data_emissao,
-            "data_vencimento":   dados.data_vencimento,
-            "data_pagamento":    dados.data_pagamento,
+            "data_emissao":      _clean_date(dados.data_emissao),
+            "data_vencimento":   _clean_date(dados.data_vencimento),
+            "data_pagamento":    _clean_date(dados.data_pagamento),
             "valor_total":       dados.valor_total,
             "descricao":         dados.descricao,
             "hash_arquivo":      hash_arquivo,
