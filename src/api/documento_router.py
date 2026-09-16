@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-import fitz
+import pymupdf
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from pydantic import BaseModel
@@ -57,16 +57,16 @@ async def upload_documento_fiscal(
     2. Insere registro em documentos_fiscais com status = "pendente"
     3. Retorna imediatamente — o worker processa a extração em background
     """
-    merged_pdf = fitz.open()
+    merged_pdf = pymupdf.open()
     for f in files:
         conteudo = await f.read()
         if f.content_type == "application/pdf":
-            pdf_doc = fitz.open("pdf", conteudo)
+            pdf_doc = pymupdf.open("pdf", conteudo)
             merged_pdf.insert_pdf(pdf_doc)
         else:
-            img_doc = fitz.open("img", conteudo)
+            img_doc = pymupdf.open("img", conteudo)
             pdf_bytes = img_doc.convert_to_pdf()
-            pdf_doc = fitz.open("pdf", pdf_bytes)
+            pdf_doc = pymupdf.open("pdf", pdf_bytes)
             merged_pdf.insert_pdf(pdf_doc)
     
     final_bytes = merged_pdf.write()

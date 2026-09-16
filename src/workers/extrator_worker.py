@@ -83,10 +83,24 @@ async def _processar_documento(supabase, doc: dict) -> None:
 
         # 2. Busca Regra Fixa no BD
         regra = None
+        origem_sugestao = "gemini_inferencia"
         if dados.nome_fornecedor:
-            res_regra = supabase.table("regras_contabeis").select("*").ilike("fornecedor_nome", f"%{dados.nome_fornecedor}%").limit(1).execute()
-            if res_regra.data:
-                regra = res_regra.data[0]
+            import re
+            fornec_norm = str(dados.nome_fornecedor).strip().upper()
+            fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
+            
+            condominio_id = doc.get("condominio_id")
+            admin_id = doc.get("administradora_id")
+            
+            if condominio_id:
+                res_regra = supabase.table("regras_de_para").select("*").eq("condominio_id", condominio_id).eq("fornecedor", fornec_norm).order("frequencia", desc=True).limit(1).execute()
+                if res_regra.data:
+                    regra = res_regra.data[0]
+            
+            if not regra and admin_id:
+                res_regra = supabase.table("regras_de_para").select("*").eq("administradora_id", admin_id).eq("fornecedor", fornec_norm).order("frequencia", desc=True).limit(1).execute()
+                if res_regra.data:
+                    regra = res_regra.data[0]
         
         conta_codigo = None
         historico_sugerido = f"Vlr. ref. {dados.descricao or 'serviços prestados'} - {dados.nome_fornecedor or ''}"
@@ -94,12 +108,37 @@ async def _processar_documento(supabase, doc: dict) -> None:
         if regra:
             conta_codigo = regra["conta_codigo"]
             score = 0.95
+            origem_sugestao = "regra_de_para"
         else:
             # 3. Se não achar, usa gemini-3.5-flash passando histórico/plano
             try:
+                # Busca plano de contas para contexto
+                admin_id = doc.get("administradora_id")
+                plano_str = ""
+                historico_str = ""
+                if admin_id:
+                    plano_res = supabase.table("plano_contas").select("codigo, descricao").eq("administradora_id", admin_id).limit(200).execute()
+                    if plano_res.data:
+                        plano_str = "Plano de Contas Disponível:\n" + "\n".join([f"{p['codigo']} - {p['descricao']}" for p in plano_res.data])
+                        
+                    # Busca histórico (regras) mais frequentes como insumo adicional
+                    hist_res = supabase.table("regras_de_para").select("fornecedor, descricao_servico, conta_codigo").eq("administradora_id", admin_id).order("frequencia", desc=True).limit(50).execute()
+                    if hist_res.data:
+                        historico_str = "Histórico de Balancetes/Regras (Referência de Classificações Passadas):\n" + "\n".join([f"Fornecedor: {h['fornecedor']} | Servico: {h.get('descricao_servico','')} -> Conta: {h['conta_codigo']}" for h in hist_res.data])
+
                 from google import genai
                 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-                prompt_classificacao = f"Você é um assistente contábil. Dado o fornecedor '{dados.nome_fornecedor}' e descrição '{dados.descricao}', sugira APENAS o código da conta contábil mais apropriada (ex: '3.1.09.99'). Se não tiver certeza, retorne '3.1.09.99'."
+                prompt_classificacao = (
+                    f"Você é um assistente contábil. Sua tarefa é classificar um novo documento.\n\n"
+                    f"FORNECEDOR DO DOCUMENTO: '{dados.nome_fornecedor}'\n"
+                    f"DESCRIÇÃO DO DOCUMENTO: '{dados.descricao}'\n\n"
+                    f"{historico_str}\n\n"
+                    f"{plano_str}\n\n"
+                    f"Regras:\n"
+                    f"1. Se encontrar um fornecedor similar no Histórico de Balancetes, use a mesma conta contábil (conta_codigo).\n"
+                    f"2. Se não houver similaridade no Histórico, sugira ESTRITAMENTE um dos códigos do Plano de Contas fornecido que faça sentido para o tipo de serviço.\n"
+                    f"3. Responda APENAS com o código da conta (ex: 3.1.09.99), nada mais."
+                )
                 resp = client.models.generate_content(
                     model="gemini-3.5-flash-lite",
                     contents=[prompt_classificacao]
@@ -118,6 +157,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
             "conta_credito_nome":   "Banco Conta Movimento",
             "historico_sugerido":   historico_sugerido,
             "score_confianca":      score,
+            "origem_sugestao":      origem_sugestao,
         }
 
         def _clean_date(d):
@@ -164,7 +204,7 @@ async def rodar_worker() -> None:
             # Busca documentos pendentes (máx 5 por ciclo para não sobrecarregar)
             result = (
                 supabase.table("documentos_fiscais")
-                .select("id, bucket, storage_path, filename, condo_nome")
+                .select("id, bucket, storage_path, filename, condo_nome, condominio_id, administradora_id")
                 .eq("status", "pendente")
                 .order("criado_em")
                 .limit(5)

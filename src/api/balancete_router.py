@@ -20,7 +20,12 @@ async def upload_balancete(
     supabase: Client = create_client(supabase_url, supabase_key)
     
     try:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Arquivo recebido: nome={file.filename}, tipo={file.content_type}, tamanho={getattr(file, 'size', 'desconhecido')}")
+        await file.seek(0)
         pdf_bytes = await file.read()
+        logger.info(f"Bytes lidos após seek(0): {len(pdf_bytes)}")
         
         data = await extract_balancete_data(pdf_bytes)
         
@@ -31,11 +36,41 @@ async def upload_balancete(
                 "administradora_id": administradora_id,
                 "fornecedor_nome": str(item.get("fornecedor_nome", "Desconhecido"))[:255],
                 "conta_codigo": str(item.get("conta_codigo", ""))[:50] if item.get("conta_codigo") else None,
+                "conta_descricao": str(item.get("conta_descricao", ""))[:255] if item.get("conta_descricao") else None,
                 "valor_referencia": float(item.get("valor_referencia", 0.0))
             })
             
         if records_to_insert:
             response = supabase.table("balancetes_historicos").insert(records_to_insert).execute()
+            
+            import re
+            for item in data:
+                fornec_norm = str(item.get("fornecedor_nome", "")).strip().upper()
+                fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
+                
+                desc_norm = str(item.get("conta_descricao", "")).strip().upper()
+                desc_norm = re.sub(r'\s+', ' ', desc_norm)
+                
+                conta_codigo = str(item.get("conta_codigo", ""))[:50] if item.get("conta_codigo") else None
+                
+                if conta_codigo and fornec_norm:
+                    try:
+                        res = supabase.table("regras_de_para").select("id, frequencia").eq("condominio_id", condominio_id).eq("fornecedor", fornec_norm).eq("descricao_servico", desc_norm).eq("conta_codigo", conta_codigo).execute()
+                        if res.data:
+                            freq = res.data[0].get("frequencia", 1) + 1
+                            supabase.table("regras_de_para").update({"frequencia": freq}).eq("id", res.data[0]["id"]).execute()
+                        else:
+                            supabase.table("regras_de_para").insert({
+                                "condominio_id": condominio_id,
+                                "administradora_id": administradora_id,
+                                "fornecedor": fornec_norm,
+                                "descricao_servico": desc_norm,
+                                "conta_codigo": conta_codigo,
+                                "frequencia": 1,
+                                "origem": "balancete"
+                            }).execute()
+                    except Exception as e:
+                        logger.error(f"Erro ao inserir regras_de_para: {e}")
             
         return {
             "status": "success", 

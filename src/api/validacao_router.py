@@ -76,6 +76,7 @@ class ValidacaoPayload(BaseModel):
     data_pagamento: str | None = None
     valor_total: float | None = None
     descricao: str | None = None
+    conta_codigo: str | None = None
 
 
 class ValidacaoResponse(BaseModel):
@@ -180,7 +181,7 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload):
     # Verifica que o documento existe e está no estado certo
     result = (
         supabase.table("documentos_fiscais")
-        .select("id, status")
+        .select("id, status, condominio_id, administradora_id")
         .eq("id", documento_id)
         .single()
         .execute()
@@ -190,7 +191,7 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload):
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
 
     doc = result.data
-    if doc["status"] not in ("extraido", "erro"):
+    if doc["status"] not in ("extraido", "erro", "validado"):
         raise HTTPException(
             status_code=400,
             detail=f"Documento com status '{doc['status']}' não pode ser validado.",
@@ -218,5 +219,39 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload):
         novo_status = "erro"
 
     supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
+
+    if payload.acao == "confirmar" and payload.conta_codigo and payload.fornecedor:
+        import re
+        fornec_norm = str(payload.fornecedor).strip().upper()
+        fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
+        
+        desc_norm = ""
+        if payload.descricao:
+            desc_norm = str(payload.descricao).strip().upper()
+            desc_norm = re.sub(r'\s+', ' ', desc_norm)
+            
+        condominio_id = doc.get("condominio_id")
+        admin_id = doc.get("administradora_id")
+        
+        if condominio_id:
+            try:
+                res = supabase.table("regras_de_para").select("id, frequencia").eq("condominio_id", condominio_id).eq("fornecedor", fornec_norm).eq("descricao_servico", desc_norm).eq("conta_codigo", payload.conta_codigo).execute()
+                if res.data:
+                    freq = res.data[0].get("frequencia", 1) + 1
+                    supabase.table("regras_de_para").update({"frequencia": freq}).eq("id", res.data[0]["id"]).execute()
+                else:
+                    supabase.table("regras_de_para").insert({
+                        "condominio_id": condominio_id,
+                        "administradora_id": admin_id,
+                        "fornecedor": fornec_norm,
+                        "descricao_servico": desc_norm,
+                        "conta_codigo": payload.conta_codigo,
+                        "frequencia": 1,
+                        "origem": "validacao_usuario"
+                    }).execute()
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Erro ao inserir regras_de_para: {e}")
 
     return ValidacaoResponse(ok=True, id=documento_id, status=novo_status)
