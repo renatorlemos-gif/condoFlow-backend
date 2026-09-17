@@ -1,28 +1,20 @@
-import os
-import json
 import logging
-import asyncio
+import re
 import pymupdf
-from google import genai
 
 logger = logging.getLogger(__name__)
 
 async def extract_balancete_data(pdf_bytes: bytes) -> list:
     """
-    Extrai texto do PDF localmente com PyMuPDF e envia para o Gemini
-    como texto puro, evitando dependência de modelos multimodais.
-    Retorna lista de dicts com (fornecedor_nome, conta_codigo, valor_referencia).
+    Extrai texto do PDF localmente com PyMuPDF e extrai dados usando Expressões Regulares,
+    eliminando a dependência do Gemini para otimizar tokens e performance.
+    Retorna lista de dicts com (descricao_lancamento, conta_codigo, conta_descricao).
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        logger.error("GEMINI_API_KEY não configurada")
-        raise ValueError("GEMINI_API_KEY ausente.")
-
     logger.info(f"Tamanho do PDF: {len(pdf_bytes)} bytes")
     if not pdf_bytes:
         raise ValueError("Arquivo PDF vazio (0 bytes recebidos).")
 
-    # 1. Extrai texto do PDF com PyMuPDF (local, sem custo de API)
+    # Extrai texto do PDF com PyMuPDF
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     texto_pdf = ""
     for page in doc:
@@ -32,48 +24,25 @@ async def extract_balancete_data(pdf_bytes: bytes) -> list:
     if not texto_pdf.strip():
         raise ValueError("Não foi possível extrair texto do PDF. O arquivo pode ser uma imagem escaneada.")
 
-    client = genai.Client(api_key=api_key)
+    resultados = []
+    
+    # Achatar o texto para evitar problemas de quebra de bloco/coluna
+    texto_pdf_flat = re.sub(r'\s+', ' ', texto_pdf)
+    
+    if "DESPESAS" in texto_pdf_flat:
+        texto_pdf_flat = texto_pdf_flat.split("DESPESAS", 1)[-1]
+        
+    with open('/tmp/dump.txt', 'w', encoding='utf-8') as f_dump:
+        f_dump.write(texto_pdf_flat)
+    
+    # Regex permissiva ancorada no valor monetário
+    padrao = re.compile(r'([\d.]+\,\d{2})\s+([A-Za-zÀ-ÿ\s/.-]+?)\s+(\d{2}/\d{4})\s+(\d{3})\s+(.*?)(?=\s+[\d.]+\,\d{2}\s+[A-Za-zÀ-ÿ]|$)')
 
-    prompt = f"""Analise o texto abaixo extraído de um balancete contábil de condomínio.
-Extraia APENAS as linhas de despesas/pagamentos realizados.
-Ignore: receitas, saldos, totais consolidados, cabeçalhos e rodapés.
-O formato de saída DEVE ser estritamente um array JSON sem formatação Markdown.
-Cada objeto deve ter:
-- "fornecedor_nome" (string): nome do fornecedor ou descrição da despesa
-- "conta_codigo" (string ou null): código contábil, se presente (ex: "3.1.01.01")
-- "conta_descricao" (string ou null): descrição textual da conta contábil (ex: "Despesas com Água", "Manutenção Predial")
-- "valor_referencia" (float): valor numérico da despesa (use ponto como separador decimal)
-Exemplo: [{{"fornecedor_nome": "Sabesp", "conta_codigo": "3.2.01", "conta_descricao": "Despesas com Água e Esgoto", "valor_referencia": 1500.00}}]
+    for match in padrao.finditer(texto_pdf_flat):
+        resultados.append({
+            "descricao_lancamento": match.group(5).strip(),
+            "conta_codigo": match.group(4),
+            "conta_descricao": match.group(2).strip()
+        })
 
-TEXTO DO BALANCETE:
-{texto_pdf}
-"""
-
-    def _process():
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt
-        )
-        return response.text
-
-    try:
-        text = await asyncio.to_thread(_process)
-
-        # Limpar possíveis delimitadores de markdown
-        text = text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-
-        data = json.loads(text)
-        if not isinstance(data, list):
-            data = [data]
-        return data
-
-    except Exception as e:
-        logger.error(f"Erro no pdf_parser_service: {e}")
-        raise e
+    return resultados

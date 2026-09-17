@@ -34,43 +34,13 @@ async def upload_balancete(
             records_to_insert.append({
                 "condominio_id": condominio_id,
                 "administradora_id": administradora_id,
-                "fornecedor_nome": str(item.get("fornecedor_nome", "Desconhecido"))[:255],
+                "descricao_lancamento": str(item.get("descricao_lancamento", "Desconhecido"))[:255],
                 "conta_codigo": str(item.get("conta_codigo", ""))[:50] if item.get("conta_codigo") else None,
-                "conta_descricao": str(item.get("conta_descricao", ""))[:255] if item.get("conta_descricao") else None,
-                "valor_referencia": float(item.get("valor_referencia", 0.0))
+                "conta_descricao": str(item.get("conta_descricao", ""))[:255] if item.get("conta_descricao") else None
             })
             
         if records_to_insert:
             response = supabase.table("balancetes_historicos").insert(records_to_insert).execute()
-            
-            import re
-            for item in data:
-                fornec_norm = str(item.get("fornecedor_nome", "")).strip().upper()
-                fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
-                
-                desc_norm = str(item.get("conta_descricao", "")).strip().upper()
-                desc_norm = re.sub(r'\s+', ' ', desc_norm)
-                
-                conta_codigo = str(item.get("conta_codigo", ""))[:50] if item.get("conta_codigo") else None
-                
-                if conta_codigo and fornec_norm:
-                    try:
-                        res = supabase.table("regras_de_para").select("id, frequencia").eq("condominio_id", condominio_id).eq("fornecedor", fornec_norm).eq("descricao_servico", desc_norm).eq("conta_codigo", conta_codigo).execute()
-                        if res.data:
-                            freq = res.data[0].get("frequencia", 1) + 1
-                            supabase.table("regras_de_para").update({"frequencia": freq}).eq("id", res.data[0]["id"]).execute()
-                        else:
-                            supabase.table("regras_de_para").insert({
-                                "condominio_id": condominio_id,
-                                "administradora_id": administradora_id,
-                                "fornecedor": fornec_norm,
-                                "descricao_servico": desc_norm,
-                                "conta_codigo": conta_codigo,
-                                "frequencia": 1,
-                                "origem": "balancete"
-                            }).execute()
-                    except Exception as e:
-                        logger.error(f"Erro ao inserir regras_de_para: {e}")
             
         return {
             "status": "success", 
@@ -80,3 +50,195 @@ async def upload_balancete(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+from pydantic import BaseModel
+from typing import Optional
+from google import genai
+from google.genai import types
+import asyncio
+
+class ProcessarRegrasRequest(BaseModel):
+    administradora_id: Optional[str] = None
+
+@router.post("/processar-regras")
+async def processar_regras(request: ProcessarRegrasRequest = None):
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    
+    if not supabase_url or not supabase_key:
+        raise HTTPException(status_code=500, detail="Variáveis de ambiente do Supabase não configuradas.")
+    if not gemini_key:
+        raise HTTPException(status_code=500, detail="Chave do Gemini não configurada.")
+        
+    supabase: Client = create_client(supabase_url, supabase_key)
+    
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        query = supabase.table("balancetes_historicos").select("id, administradora_id, descricao_lancamento, conta_codigo, conta_descricao").or_("processado_ia.is.null,processado_ia.eq.false")
+        if request and request.administradora_id:
+            query = query.eq("administradora_id", request.administradora_id)
+            
+        res = query.execute()
+        data = res.data or []
+        
+        # Cenário 02: Agrupar por administradora_id e conta_codigo
+        grupos = {}
+        for item in data:
+            item_id = item.get("id")
+            admin_id = item.get("administradora_id")
+            conta = item.get("conta_codigo")
+            desc = item.get("descricao_lancamento")
+            conta_descricao = item.get("conta_descricao")
+            
+            if not admin_id or not conta:
+                continue
+                
+            chave = (admin_id, conta)
+            if chave not in grupos:
+                grupos[chave] = {"descricoes": set(), "ids": [], "conta_descricao": conta_descricao}
+            if desc:
+                grupos[chave]["descricoes"].add(desc)
+            if item_id:
+                grupos[chave]["ids"].append(item_id)
+                
+        import json
+        client = genai.Client(api_key=gemini_key)
+        resultados = []
+        erros = 0
+        
+        grupos_list = list(grupos.items())
+        batch_size = 20
+        
+        # Cenário 03: Loop assíncrono para cada lote de grupos
+        for i in range(0, len(grupos_list), batch_size):
+            lote = grupos_list[i:i+batch_size]
+            
+            dados_para_ia = []
+            for idx, (chave, grupo_data) in enumerate(lote):
+                admin_id, conta = chave
+                dados_para_ia.append({
+                    "id": idx,
+                    "conta": conta,
+                    "descricoes": list(grupo_data["descricoes"])
+                })
+                
+            prompt = (
+                "Analise a lista de contas e descrições de balancetes a seguir.\n"
+                "Para cada conta, sintetize um 'contexto' geral consolidado (máximo 300 caracteres) com base nas descrições fornecidas.\n"
+                "Responda EXATAMENTE com um objeto JSON contendo um array 'resultados' com os contextos processados.\n"
+                "Formato esperado:\n"
+                "{\n"
+                '  "resultados": [\n'
+                '    {"id": 0, "contexto": "síntese aqui"},\n'
+                '    {"id": 1, "contexto": "síntese aqui"}\n'
+                "  ]\n"
+                "}\n\n"
+                f"Lista: {json.dumps(dados_para_ia, ensure_ascii=False)}"
+            )
+            
+            try:
+                # Cenário 04: Enviar ao Gemini pedindo a síntese em lote
+                def chamar_gemini():
+                    return client.models.generate_content(
+                        model="gemini-3.1-flash-lite",
+                        contents=[prompt],
+                        config=types.GenerateContentConfig(
+                            temperature=0.0,
+                            response_mime_type="application/json"
+                        )
+                    )
+                
+                resp = await asyncio.to_thread(chamar_gemini)
+                texto = resp.text.strip()
+                try:
+                    resp_json = json.loads(texto)
+                except json.JSONDecodeError:
+                    if texto.startswith("```json"):
+                        texto = texto.replace("```json", "", 1)
+                    elif texto.startswith("```"):
+                        texto = texto.replace("```", "", 1)
+                    if texto.endswith("```"):
+                        texto = texto[:-3]
+                    texto = texto.strip()
+                    resp_json = json.loads(texto)
+                    
+                resultados_list = resp_json.get("resultados", []) if isinstance(resp_json, dict) else (resp_json if isinstance(resp_json, list) else [])
+                contextos_por_id = {item.get("id"): item.get("contexto", "") for item in resultados_list if isinstance(item, dict) and "id" in item}
+                
+                contextos_lote = []
+                for idx, _ in enumerate(lote):
+                    contexto = contextos_por_id.get(idx, "")
+                    if not contexto:
+                        contexto = "Contexto não gerado pela IA"
+                    else:
+                        contexto = str(contexto)[:300]
+                    contextos_lote.append(contexto)
+                    
+                def chamar_embeddings_individuais():
+                    embeddings = []
+                    for texto_individual in contextos_lote:
+                        resp = client.models.embed_content(
+                            model='gemini-embedding-2',
+                            contents=texto_individual,
+                            config=types.EmbedContentConfig(output_dimensionality=768)
+                        )
+                        embeddings.append(list(resp.embeddings[0].values))
+                    return embeddings
+                
+                embeddings_lote = await asyncio.to_thread(chamar_embeddings_individuais)
+                
+                for idx, (chave, grupo_data) in enumerate(lote):
+                    admin_id, conta = chave
+                    contexto = contextos_lote[idx]
+                    embedding_val = embeddings_lote[idx]
+                        
+                    # Fazer o UPSERT na tabela regras_contabeis
+                    upsert_data = {
+                        "administradora_id": admin_id,
+                        "conta_codigo": conta,
+                        "conta_descricao": grupo_data.get("conta_descricao"),
+                        "contexto": contexto,
+                        "embedding": embedding_val,
+                        "criada_por_ia": True
+                    }
+                    
+                    try:
+                        supabase.table("regras_contabeis").upsert(
+                            upsert_data, 
+                            on_conflict="administradora_id,conta_codigo"
+                        ).execute()
+                    except Exception as e:
+                        logger.error(f"Erro no upsert de regras_contabeis: {e}")
+                        
+                    # Atualiza processado_ia
+                    ids_to_update = grupo_data["ids"]
+                    if ids_to_update:
+                        for chunk_i in range(0, len(ids_to_update), 50):
+                            chunk_ids = ids_to_update[chunk_i:chunk_i+50]
+                            supabase.table("balancetes_historicos").update({"processado_ia": True}).in_("id", chunk_ids).execute()
+                    
+                    resultados.append({
+                        "conta": conta,
+                        "conta_descricao": grupo_data.get("conta_descricao"),
+                        "contexto": contexto
+                    })
+                    
+            except Exception as e:
+                # Cenário 05: Aplicar resiliência (timeout ou falha não quebra o loop)
+                logger.error(f"Erro ao processar lote: {e}")
+                erros += len(lote)
+                continue
+                
+        return {
+            "status": "success",
+            "processados": len(resultados),
+            "erros": erros,
+            "detalhes": resultados
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

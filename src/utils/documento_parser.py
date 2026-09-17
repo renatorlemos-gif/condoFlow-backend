@@ -114,7 +114,7 @@ com atenção:
         )
 
         response = self.client.models.generate_content(
-            model="gemini-3.5-flash-lite",
+            model="gemini-3.5-flash",
             contents=[
                 types.Part.from_bytes(
                     data=contents,

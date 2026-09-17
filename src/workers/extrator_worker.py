@@ -81,80 +81,82 @@ async def _processar_documento(supabase, doc: dict) -> None:
         # Remove arquivo temporário
         os.unlink(tmp_path)
 
-        # 2. Busca Regra Fixa no BD
-        regra = None
-        origem_sugestao = "gemini_inferencia"
-        if dados.nome_fornecedor:
-            import re
-            fornec_norm = str(dados.nome_fornecedor).strip().upper()
-            fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
-            
-            condominio_id = doc.get("condominio_id")
-            admin_id = doc.get("administradora_id")
-            
-            if condominio_id:
-                res_regra = supabase.table("regras_de_para").select("*").eq("condominio_id", condominio_id).eq("fornecedor", fornec_norm).order("frequencia", desc=True).limit(1).execute()
-                if res_regra.data:
-                    regra = res_regra.data[0]
-            
-            if not regra and admin_id:
-                res_regra = supabase.table("regras_de_para").select("*").eq("administradora_id", admin_id).eq("fornecedor", fornec_norm).order("frequencia", desc=True).limit(1).execute()
-                if res_regra.data:
-                    regra = res_regra.data[0]
-        
+        # 2. RAG para classificação contábil
         conta_codigo = None
-        historico_sugerido = f"Vlr. ref. {dados.descricao or 'serviços prestados'} - {dados.nome_fornecedor or ''}"
+        conta_nome = "Conta Classificada"
+        desc_segura = getattr(dados, "descricao", None) or "serviços prestados"
+        fornec_seguro = getattr(dados, "nome_fornecedor", None) or ""
+        historico_sugerido = f"Vlr. ref. {desc_segura} - {fornec_seguro}"
+        score = 0.0
+        origem_sugestao = "gemini_inferencia"
         
-        if regra:
-            conta_codigo = regra["conta_codigo"]
-            score = 0.95
-            origem_sugestao = "regra_de_para"
-        else:
-            # 3. Se não achar, usa gemini-3.5-flash passando histórico/plano
-            try:
-                # Busca plano de contas para contexto
-                admin_id = doc.get("administradora_id")
-                plano_str = ""
-                historico_str = ""
-                if admin_id:
-                    plano_res = supabase.table("plano_contas").select("codigo, descricao").eq("administradora_id", admin_id).limit(200).execute()
-                    if plano_res.data:
-                        plano_str = "Plano de Contas Disponível:\n" + "\n".join([f"{p['codigo']} - {p['descricao']}" for p in plano_res.data])
-                        
-                    # Busca histórico (regras) mais frequentes como insumo adicional
-                    hist_res = supabase.table("regras_de_para").select("fornecedor, descricao_servico, conta_codigo").eq("administradora_id", admin_id).order("frequencia", desc=True).limit(50).execute()
-                    if hist_res.data:
-                        historico_str = "Histórico de Balancetes/Regras (Referência de Classificações Passadas):\n" + "\n".join([f"Fornecedor: {h['fornecedor']} | Servico: {h.get('descricao_servico','')} -> Conta: {h['conta_codigo']}" for h in hist_res.data])
-
+        try:
+            admin_id = doc.get("administradora_id")
+            if admin_id:
                 from google import genai
+                from google.genai import types
                 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-                prompt_classificacao = (
-                    f"Você é um assistente contábil. Sua tarefa é classificar um novo documento.\n\n"
-                    f"FORNECEDOR DO DOCUMENTO: '{dados.nome_fornecedor}'\n"
-                    f"DESCRIÇÃO DO DOCUMENTO: '{dados.descricao}'\n\n"
-                    f"{historico_str}\n\n"
-                    f"{plano_str}\n\n"
-                    f"Regras:\n"
-                    f"1. Se encontrar um fornecedor similar no Histórico de Balancetes, use a mesma conta contábil (conta_codigo).\n"
-                    f"2. Se não houver similaridade no Histórico, sugira ESTRITAMENTE um dos códigos do Plano de Contas fornecido que faça sentido para o tipo de serviço.\n"
-                    f"3. Responda APENAS com o código da conta (ex: 3.1.09.99), nada mais."
+                
+                texto_busca = f"{fornec_seguro} {desc_segura}".strip()
+                
+                # Gera embedding
+                emb_res = client.models.embed_content(
+                    model="gemini-embedding-2",
+                    contents=texto_busca,
+                    config=types.EmbedContentConfig(output_dimensionality=768)
                 )
-                resp = client.models.generate_content(
-                    model="gemini-3.5-flash-lite",
-                    contents=[prompt_classificacao]
-                )
-                conta_codigo = resp.text.strip()
-                score = 0.70
-            except Exception as e:
-                logger.error(f"Erro no motor de classificação Gemini: {e}")
-                conta_codigo = "3.1.09.99"
-                score = 0.50
+                embedding = emb_res.embeddings[0].values
+                
+                # Busca regras no Supabase via vetor
+                res_rag = supabase.rpc("match_regras_contabeis", {
+                    "query_embedding": list(embedding),
+                    "match_threshold": 0.4,
+                    "match_count": 5,
+                    "p_administradora_id": admin_id
+                }).execute()
+                
+                if res_rag.data:
+                    regras_str = ""
+                    for r in res_rag.data:
+                        regras_str += f"Código: {r.get('conta_codigo')} | Conta: {r.get('conta_descricao', 'N/A')} | Contexto: {r.get('contexto', 'N/A')}\n"
+                    
+                    prompt_classificacao = (
+                        f"Você é um assistente contábil. Sua tarefa é julgar a regra contábil perfeita para este documento.\n\n"
+                        f"FORNECEDOR DO DOCUMENTO: '{fornec_seguro}'\n"
+                        f"DESCRIÇÃO DO DOCUMENTO: '{desc_segura}'\n\n"
+                        f"Top 5 Regras Contábeis Sugeridas:\n{regras_str}\n\n"
+                        f"Julgue qual destas 5 regras é a perfeita para a Nota Fiscal.\n"
+                        f"Responda APENAS com o 'Código' da conta escolhida. Se NENHUMA servir, devolva 'nulo'."
+                    )
+                    
+                    resp = client.models.generate_content(
+                        model="gemini-3.5-flash",
+                        contents=[prompt_classificacao],
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
+                    
+                    sugestao = resp.text.strip()
+                    if sugestao.lower() not in ("null", "nulo", "vazio", "none", ""):
+                        conta_codigo = sugestao
+                        score = 0.95
+                        origem_sugestao = "rag_semantico"
+                        
+                        nome_res = supabase.table("regras_contabeis").select("conta_descricao").eq("administradora_id", admin_id).eq("conta_codigo", conta_codigo).execute()
+                        if nome_res.data:
+                            conta_nome = nome_res.data[0]["conta_descricao"]
+                else:
+                    origem_sugestao = "rag_sem_resultado"
+        except Exception as e:
+            logger.error(f"Erro no fluxo RAG: {e}")
+            conta_codigo = None
+            score = 0.0
+            origem_sugestao = "rag_erro"
 
         sugestao_json = {
             "conta_debito_codigo":  conta_codigo,
-            "conta_debito_nome":    "Conta Classificada",
-            "conta_credito_codigo": "1.1.01.02",
-            "conta_credito_nome":   "Banco Conta Movimento",
+            "conta_debito_nome":    conta_nome if conta_codigo else None,
+            "conta_credito_codigo": "1.1.01.02" if conta_codigo else None,
+            "conta_credito_nome":   "Banco Conta Movimento" if conta_codigo else None,
             "historico_sugerido":   historico_sugerido,
             "score_confianca":      score,
             "origem_sugestao":      origem_sugestao,

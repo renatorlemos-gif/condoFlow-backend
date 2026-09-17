@@ -198,6 +198,27 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload):
         )
 
     if payload.acao == "confirmar":
+        if not payload.conta_codigo or not payload.conta_codigo.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="A conta contábil é obrigatória para validação."
+            )
+            
+        admin_id = doc.get("administradora_id")
+        if admin_id:
+            conta_result = (
+                supabase.table("plano_contas")
+                .select("codigo")
+                .eq("administradora_id", admin_id)
+                .eq("codigo", payload.conta_codigo)
+                .execute()
+            )
+            if not conta_result.data:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A conta contábil fornecida não pertence ao plano de contas atual."
+                )
+
         update = {
             "status":          "validado",
             "fornecedor":      payload.fornecedor,
@@ -222,36 +243,91 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload):
 
     if payload.acao == "confirmar" and payload.conta_codigo and payload.fornecedor:
         import re
+        import asyncio
         fornec_norm = str(payload.fornecedor).strip().upper()
         fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
         
-        desc_norm = ""
-        if payload.descricao:
-            desc_norm = str(payload.descricao).strip().upper()
-            desc_norm = re.sub(r'\s+', ' ', desc_norm)
-            
-        condominio_id = doc.get("condominio_id")
         admin_id = doc.get("administradora_id")
+        desc_doc = payload.descricao or ""
+        conta_codigo = payload.conta_codigo
         
-        if condominio_id:
-            try:
-                res = supabase.table("regras_de_para").select("id, frequencia").eq("condominio_id", condominio_id).eq("fornecedor", fornec_norm).eq("descricao_servico", desc_norm).eq("conta_codigo", payload.conta_codigo).execute()
-                if res.data:
-                    freq = res.data[0].get("frequencia", 1) + 1
-                    supabase.table("regras_de_para").update({"frequencia": freq}).eq("id", res.data[0]["id"]).execute()
-                else:
-                    supabase.table("regras_de_para").insert({
-                        "condominio_id": condominio_id,
-                        "administradora_id": admin_id,
-                        "fornecedor": fornec_norm,
-                        "descricao_servico": desc_norm,
-                        "conta_codigo": payload.conta_codigo,
-                        "frequencia": 1,
-                        "origem": "validacao_usuario"
-                    }).execute()
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Erro ao inserir regras_de_para: {e}")
+        if admin_id:
+            # Dispara background task para o motor semântico
+            asyncio.create_task(_executar_merge_semantico(
+                admin_id=admin_id,
+                fornecedor=fornec_norm,
+                conta_codigo=conta_codigo,
+                nova_descricao=desc_doc
+            ))
 
     return ValidacaoResponse(ok=True, id=documento_id, status=novo_status)
+
+
+async def _executar_merge_semantico(admin_id: int, fornecedor: str, conta_codigo: str, nova_descricao: str):
+    import os
+    import logging
+    logger = logging.getLogger("merge_semantico")
+    
+    try:
+        supabase = _get_supabase()
+        
+        # 1. Busca contexto existente
+        res = supabase.table("regras_contabeis").select("contexto").eq("administradora_id", admin_id).eq("fornecedor_nome", fornecedor).eq("conta_codigo", conta_codigo).execute()
+        
+        contexto_existente = ""
+        if res.data and res.data[0].get("contexto"):
+            contexto_existente = res.data[0]["contexto"]
+            
+        # 2. Sintetiza novo contexto com Gemini
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+        
+        prompt = (
+            f"Você é um motor semântico contábil. Faça o merge do contexto existente com a nova descrição da despesa.\n"
+            f"Fornecedor: {fornecedor}\n"
+            f"Conta Contábil: {conta_codigo}\n"
+            f"Contexto Existente: '{contexto_existente}'\n"
+            f"Nova Descrição: '{nova_descricao}'\n\n"
+            f"Gere um texto descritivo e conciso (entre 250 e 300 caracteres) explicando a natureza das despesas desta regra.\n"
+            f"Responda APENAS com o novo texto de contexto."
+        )
+        
+        resp = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=[prompt],
+            config=types.GenerateContentConfig(temperature=0.0)
+        )
+        
+        novo_contexto = resp.text.strip()
+        if len(novo_contexto) > 300:
+            novo_contexto = novo_contexto[:297] + "..."
+            
+        # 3. Salva no Supabase via UPSERT para garantir unicidade
+        supabase.table("regras_contabeis").upsert({
+            "administradora_id": admin_id,
+            "fornecedor_nome": fornecedor,
+            "conta_codigo": conta_codigo,
+            "contexto": novo_contexto,
+            "criada_por_ia": True,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }, on_conflict="administradora_id, fornecedor_nome, conta_codigo").execute()
+        
+        # 4. Efeito Cascata (Ripple Effect) em lote
+        # Atualiza sugestão de conta de todos os documentos 'pendente' do mesmo fornecedor e admin
+        docs_pendentes = supabase.table("documentos_fiscais").select("id, sugestao_contabil").eq("administradora_id", admin_id).eq("fornecedor", fornecedor).eq("status", "pendente").execute()
+        
+        if docs_pendentes.data:
+            for d in docs_pendentes.data:
+                sugestao = d.get("sugestao_contabil") or {}
+                sugestao["conta_debito_codigo"] = conta_codigo
+                sugestao["origem_sugestao"] = "ripple_effect_merge"
+                
+                supabase.table("documentos_fiscais").update({
+                    "sugestao_contabil": sugestao
+                }).eq("id", d["id"]).execute()
+                
+        logger.info(f"Merge semântico concluído para fornecedor {fornecedor}.")
+        
+    except Exception as e:
+        logger.error(f"Erro no merge semântico: {e}")

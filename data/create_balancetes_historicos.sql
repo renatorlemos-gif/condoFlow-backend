@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS balancetes_historicos (
     administradora_id TEXT NOT NULL,
     fornecedor_nome TEXT NOT NULL,
     conta_codigo TEXT,
-    valor_referencia NUMERIC NOT NULL,
     criado_em TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE balancetes_historicos ADD COLUMN IF NOT EXISTS processado_ia BOOLEAN DEFAULT FALSE;

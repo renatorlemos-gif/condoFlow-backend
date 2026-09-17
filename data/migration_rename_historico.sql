@@ -1,0 +1,1 @@
+ALTER TABLE balancetes_historicos RENAME COLUMN fornecedor_nome TO descricao_lancamento;
