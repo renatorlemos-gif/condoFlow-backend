@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import asyncio
 
 from fastapi import UploadFile
 from pydantic import BaseModel, Field
@@ -113,21 +114,29 @@ com atenção:
             },
         )
 
-        response = self.client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=[
-                types.Part.from_bytes(
-                    data=contents,
-                    mime_type=file.content_type or "application/pdf",
-                ),
-                prompt,
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
-                temperature=0,
-            ),
-        )
+        for attempt in range(1, 4):
+            try:
+                response = self.client.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    contents=[
+                        types.Part.from_bytes(
+                            data=contents,
+                            mime_type=file.content_type or "application/pdf",
+                        ),
+                        prompt,
+                    ],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=response_schema,
+                        temperature=0,
+                    ),
+                )
+                break
+            except Exception as e:
+                if attempt < 3 and ("503" in str(e) or "429" in str(e)):
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise e
 
         bruto = _ExtracaoBrutaSchema.model_validate_json(response.text)
 

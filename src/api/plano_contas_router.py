@@ -72,16 +72,14 @@ async def upload_plano_contas(
             
         supabase = _get_supabase()
         
-        # Apaga o plano de contas existente para esta administradora antes de inserir o novo (opcional, mas comum em upserts em lote)
-        # Para evitar problemas, fazemos upsert baseado no unique (administradora_id, codigo)
-        # Vamos deletar e inserir de novo para simplificar
-        supabase.table("plano_contas").delete().eq("administradora_id", administradora_id).execute()
+        # Não deletamos a tabela toda para preservar 'contexto' e 'embedding' das regras semânticas
+        # Faz upsert baseado na chave composta (administradora_id, codigo)
         
         # Inserir em lotes de 1000
         batch_size = 1000
         for i in range(0, len(inserts), batch_size):
             batch = inserts[i:i+batch_size]
-            supabase.table("plano_contas").insert(batch).execute()
+            supabase.table("plano_contas").upsert(batch, on_conflict="administradora_id,codigo").execute()
             
         return {"mensagem": f"{len(inserts)} contas carregadas com sucesso.", "quantidade": len(inserts)}
         

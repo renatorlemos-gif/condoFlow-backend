@@ -60,6 +60,7 @@ class DocumentoDetalhe(BaseModel):
     descricao: str | None
     hash_arquivo: str | None
     sugestao_contabil: dict | None
+    administradora_id: int | str | None
     criado_em: str
     extraido_em: str | None
     erro_msg: str | None
@@ -163,6 +164,7 @@ async def detalhe_documento(documento_id: str):
         descricao=doc.get("descricao"),
         hash_arquivo=doc.get("hash_arquivo"),
         sugestao_contabil=doc.get("sugestao_contabil"),
+        administradora_id=doc.get("administradora_id"),
         criado_em=doc["criado_em"],
         extraido_em=doc.get("extraido_em"),
         erro_msg=doc.get("erro_msg"),
@@ -272,7 +274,7 @@ async def _executar_merge_semantico(admin_id: int, fornecedor: str, conta_codigo
         supabase = _get_supabase()
         
         # 1. Busca contexto existente
-        res = supabase.table("regras_contabeis").select("contexto").eq("administradora_id", admin_id).eq("fornecedor_nome", fornecedor).eq("conta_codigo", conta_codigo).execute()
+        res = supabase.table("plano_contas").select("contexto").eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
         
         contexto_existente = ""
         if res.data and res.data[0].get("contexto"):
@@ -285,16 +287,16 @@ async def _executar_merge_semantico(admin_id: int, fornecedor: str, conta_codigo
         
         prompt = (
             f"Você é um motor semântico contábil. Faça o merge do contexto existente com a nova descrição da despesa.\n"
-            f"Fornecedor: {fornecedor}\n"
             f"Conta Contábil: {conta_codigo}\n"
             f"Contexto Existente: '{contexto_existente}'\n"
             f"Nova Descrição: '{nova_descricao}'\n\n"
-            f"Gere um texto descritivo e conciso (entre 250 e 300 caracteres) explicando a natureza das despesas desta regra.\n"
+            f"INSTRUÇÃO ESTRITA: Você DEVE abstrair e omitir quaisquer nomes de prestadores de serviço, empresas, pessoas, datas, meses e locais específicos presentes na Nova Descrição ou no Contexto Existente. "
+            f"Gere um texto descritivo e conciso (máximo 300 caracteres) explicando de forma genérica, conceitual e abrangente a natureza das despesas desta regra.\n"
             f"Responda APENAS com o novo texto de contexto."
         )
         
         resp = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model="gemini-3.1-flash-lite",
             contents=[prompt],
             config=types.GenerateContentConfig(temperature=0.0)
         )
@@ -303,15 +305,21 @@ async def _executar_merge_semantico(admin_id: int, fornecedor: str, conta_codigo
         if len(novo_contexto) > 300:
             novo_contexto = novo_contexto[:297] + "..."
             
-        # 3. Salva no Supabase via UPSERT para garantir unicidade
-        supabase.table("regras_contabeis").upsert({
-            "administradora_id": admin_id,
-            "fornecedor_nome": fornecedor,
-            "conta_codigo": conta_codigo,
+        # 2.5 Gera novo embedding vetorial
+        emb_res = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=novo_contexto,
+            config=types.EmbedContentConfig(output_dimensionality=768)
+        )
+        novo_embedding = emb_res.embeddings[0].values
+            
+        # 3. Salva no Supabase via UPDATE na tabela plano_contas (já existe, apenas atualizamos o contexto e embedding)
+        supabase.table("plano_contas").update({
             "contexto": novo_contexto,
+            "embedding": list(novo_embedding),
             "criada_por_ia": True,
             "updated_at": datetime.now(timezone.utc).isoformat()
-        }, on_conflict="administradora_id, fornecedor_nome, conta_codigo").execute()
+        }).eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
         
         # 4. Efeito Cascata (Ripple Effect) em lote
         # Atualiza sugestão de conta de todos os documentos 'pendente' do mesmo fornecedor e admin

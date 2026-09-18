@@ -128,12 +128,15 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
             prompt = (
                 "Analise a lista de contas e descrições de balancetes a seguir.\n"
                 "Para cada conta, sintetize um 'contexto' geral consolidado (máximo 300 caracteres) com base nas descrições fornecidas.\n"
+                "INSTRUÇÃO ESTRITA: Você DEVE abstrair e omitir quaisquer nomes de prestadores de serviço, empresas, pessoas, datas, meses e locais específicos. "
+                "O contexto gerado deve ser uma definição genérica, conceitual e abrangente sobre a natureza da despesa contábil "
+                "(Ex: em vez de 'reparo na garagem por Tarcisio', gere 'Despesas com contratação de mão-de-obra autônoma ou terceirizada para reparos e manutenção em geral').\n"
                 "Responda EXATAMENTE com um objeto JSON contendo um array 'resultados' com os contextos processados.\n"
                 "Formato esperado:\n"
                 "{\n"
                 '  "resultados": [\n'
-                '    {"id": 0, "contexto": "síntese aqui"},\n'
-                '    {"id": 1, "contexto": "síntese aqui"}\n'
+                '    {"id": 0, "contexto": "síntese genérica aqui sem nomes"},\n'
+                '    {"id": 1, "contexto": "síntese genérica aqui sem nomes"}\n'
                 "  ]\n"
                 "}\n\n"
                 f"Lista: {json.dumps(dados_para_ia, ensure_ascii=False)}"
@@ -195,23 +198,23 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                     contexto = contextos_lote[idx]
                     embedding_val = embeddings_lote[idx]
                         
-                    # Fazer o UPSERT na tabela regras_contabeis
+                    # Fazer o UPSERT na tabela plano_contas
                     upsert_data = {
-                        "administradora_id": admin_id,
-                        "conta_codigo": conta,
-                        "conta_descricao": grupo_data.get("conta_descricao"),
+                        "administradora_id": str(admin_id),
+                        "codigo": conta,
+                        "descricao": grupo_data.get("conta_descricao") or "Conta Contábil",
                         "contexto": contexto,
                         "embedding": embedding_val,
                         "criada_por_ia": True
                     }
                     
                     try:
-                        supabase.table("regras_contabeis").upsert(
+                        supabase.table("plano_contas").upsert(
                             upsert_data, 
-                            on_conflict="administradora_id,conta_codigo"
+                            on_conflict="administradora_id,codigo"
                         ).execute()
                     except Exception as e:
-                        logger.error(f"Erro no upsert de regras_contabeis: {e}")
+                        logger.error(f"Erro no upsert de plano_contas: {e}")
                         
                     # Atualiza processado_ia
                     ids_to_update = grupo_data["ids"]
@@ -230,7 +233,9 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                 # Cenário 05: Aplicar resiliência (timeout ou falha não quebra o loop)
                 logger.error(f"Erro ao processar lote: {e}")
                 erros += len(lote)
-                continue
+            
+            # Pausa para aliviar o rate limit da API gratuita do Gemini
+            await asyncio.sleep(2)
                 
         return {
             "status": "success",

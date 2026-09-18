@@ -18,7 +18,9 @@ Intervalo configurável via env var WORKER_INTERVAL_SECONDS (default: 30).
 import asyncio
 import io
 import logging
+import math
 import os
+import traceback
 from datetime import datetime, timezone
 
 from supabase import create_client
@@ -100,54 +102,95 @@ async def _processar_documento(supabase, doc: dict) -> None:
                 texto_busca = f"{fornec_seguro} {desc_segura}".strip()
                 
                 # Gera embedding
-                emb_res = client.models.embed_content(
-                    model="gemini-embedding-2",
-                    contents=texto_busca,
-                    config=types.EmbedContentConfig(output_dimensionality=768)
-                )
+                for attempt in range(1, 4):
+                    try:
+                        emb_res = client.models.embed_content(
+                            model="gemini-embedding-2",
+                            contents=texto_busca,
+                            config=types.EmbedContentConfig(output_dimensionality=768)
+                        )
+                        break
+                    except Exception as e:
+                        if attempt < 3 and ("503" in str(e) or "429" in str(e)):
+                            await asyncio.sleep(2 ** attempt)
+                        else:
+                            raise e
                 embedding = emb_res.embeddings[0].values
                 
                 # Busca regras no Supabase via vetor
-                res_rag = supabase.rpc("match_regras_contabeis", {
+                # Busca regras no Supabase via vetor
+                res_rag = supabase.rpc("match_plano_contas", {
                     "query_embedding": list(embedding),
                     "match_threshold": 0.4,
                     "match_count": 5,
-                    "p_administradora_id": admin_id
+                    "p_administradora_id": str(admin_id)
                 }).execute()
                 
                 if res_rag.data:
-                    regras_str = ""
-                    for r in res_rag.data:
-                        regras_str += f"Código: {r.get('conta_codigo')} | Conta: {r.get('conta_descricao', 'N/A')} | Contexto: {r.get('contexto', 'N/A')}\n"
+                    top_match = res_rag.data[0]
+                    # Fast Path relaxado para poupar requisições: se similaridade boa, não chama o Gemini
+                    sim = top_match.get('similarity')
+                    if sim is None:
+                        sim = 0.0
+                    elif isinstance(sim, str) and sim.lower() == 'nan':
+                        sim = 0.0
+                    elif isinstance(sim, float) and math.isnan(sim):
+                        sim = 0.0
+                    else:
+                        sim = float(sim)
                     
-                    prompt_classificacao = (
-                        f"Você é um assistente contábil. Sua tarefa é julgar a regra contábil perfeita para este documento.\n\n"
-                        f"FORNECEDOR DO DOCUMENTO: '{fornec_seguro}'\n"
-                        f"DESCRIÇÃO DO DOCUMENTO: '{desc_segura}'\n\n"
-                        f"Top 5 Regras Contábeis Sugeridas:\n{regras_str}\n\n"
-                        f"Julgue qual destas 5 regras é a perfeita para a Nota Fiscal.\n"
-                        f"Responda APENAS com o 'Código' da conta escolhida. Se NENHUMA servir, devolva 'nulo'."
-                    )
-                    
-                    resp = client.models.generate_content(
-                        model="gemini-3.5-flash",
-                        contents=[prompt_classificacao],
-                        config=types.GenerateContentConfig(temperature=0.0)
-                    )
-                    
-                    sugestao = resp.text.strip()
-                    if sugestao.lower() not in ("null", "nulo", "vazio", "none", ""):
-                        conta_codigo = sugestao
-                        score = 0.95
-                        origem_sugestao = "rag_semantico"
+                    if sim >= 0.70:
+                        conta_codigo = top_match.get('codigo')
+                        conta_nome = top_match.get('descricao', 'N/A')
+                        score = top_match.get('similarity', 0.90)
+                        origem_sugestao = "rag_fast_path"
+                    else:
+                        regras_str = ""
+                        for r in res_rag.data:
+                            regras_str += f"Código: {r.get('codigo')} | Conta: {r.get('descricao', 'N/A')} | Contexto: {r.get('contexto', 'N/A')}\n"
                         
-                        nome_res = supabase.table("regras_contabeis").select("conta_descricao").eq("administradora_id", admin_id).eq("conta_codigo", conta_codigo).execute()
-                        if nome_res.data:
-                            conta_nome = nome_res.data[0]["conta_descricao"]
+                        prompt_classificacao = (
+                            f"Você é um assistente contábil. Sua tarefa é julgar a regra contábil perfeita para este documento.\n\n"
+                            f"FORNECEDOR DO DOCUMENTO: '{fornec_seguro}'\n"
+                            f"DESCRIÇÃO DO DOCUMENTO: '{desc_segura}'\n\n"
+                            f"Top 5 Regras Contábeis Sugeridas:\n{regras_str}\n\n"
+                            f"Julgue qual destas 5 regras é a perfeita para a Nota Fiscal.\n"
+                            f"Responda APENAS com o 'Código' da conta escolhida. Se NENHUMA servir, devolva 'nulo'."
+                        )
+                        
+                        for attempt in range(1, 4):
+                            try:
+                                resp = client.models.generate_content(
+                                    model="gemini-3.1-flash-lite",
+                                    contents=[prompt_classificacao],
+                                    config=types.GenerateContentConfig(temperature=0.0)
+                                )
+                                break
+                            except Exception as e:
+                                if attempt < 3 and ("503" in str(e) or "429" in str(e)):
+                                    await asyncio.sleep(2 ** attempt)
+                                else:
+                                    raise e
+                        
+                        sugestao = resp.text.strip()
+                        if sugestao.lower() not in ("null", "nulo", "vazio", "none", ""):
+                            conta_codigo = sugestao
+                            score = top_match.get('similarity', 0.80) # Use similarity of the best match as base
+                            origem_sugestao = "rag_gemini_arbitration"
+                            
+                            nome_res = supabase.table("plano_contas").select("descricao").eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
+                            if nome_res.data:
+                                conta_nome = nome_res.data[0]["descricao"]
+                        else:
+                            # FALLBACK: O Gemini refugou. Use o top_match obrigatóriamente!
+                            conta_codigo = top_match.get('codigo')
+                            conta_nome = top_match.get('descricao', 'N/A')
+                            score = top_match.get('similarity', 0.0)
+                            origem_sugestao = "rag_fallback_top_score"
                 else:
                     origem_sugestao = "rag_sem_resultado"
         except Exception as e:
-            logger.error(f"Erro no fluxo RAG: {e}")
+            logger.error(f"Erro no fluxo RAG: {e}\n{traceback.format_exc()}")
             conta_codigo = None
             score = 0.0
             origem_sugestao = "rag_erro"
@@ -207,7 +250,7 @@ async def rodar_worker() -> None:
             result = (
                 supabase.table("documentos_fiscais")
                 .select("id, bucket, storage_path, filename, condo_nome, condominio_id, administradora_id")
-                .eq("status", "pendente")
+                .in_("status", ["pendente", "extraindo"])
                 .order("criado_em")
                 .limit(5)
                 .execute()
@@ -216,11 +259,11 @@ async def rodar_worker() -> None:
             docs = result.data or []
 
             if docs:
-                logger.info(f"[worker] {len(docs)} documento(s) pendente(s)")
+                logger.info(f"[worker] {len(docs)} documento(s) na fila (pendente/extraindo)")
                 for doc in docs:
                     await _processar_documento(supabase, doc)
             else:
-                logger.debug("[worker] nenhum documento pendente")
+                logger.debug("[worker] nenhum documento na fila")
 
         except Exception as e:
             logger.error(f"[worker] erro no ciclo: {e}")
