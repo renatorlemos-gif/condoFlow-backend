@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -61,6 +61,7 @@ class DocumentoDetalhe(BaseModel):
     hash_arquivo: str | None
     sugestao_contabil: dict | None
     administradora_id: int | str | None
+    url_sefaz_qr: str | None
     criado_em: str
     extraido_em: str | None
     erro_msg: str | None
@@ -165,14 +166,110 @@ async def detalhe_documento(documento_id: str):
         hash_arquivo=doc.get("hash_arquivo"),
         sugestao_contabil=doc.get("sugestao_contabil"),
         administradora_id=doc.get("administradora_id"),
+        url_sefaz_qr=doc.get("url_sefaz_qr"),
         criado_em=doc["criado_em"],
         extraido_em=doc.get("extraido_em"),
         erro_msg=doc.get("erro_msg"),
     )
 
 
+class ContaOpcao(BaseModel):
+    codigo: str
+    descricao: str
+    similarity: float | None = None
+
+
+@router.get("/documentos/{documento_id}/contas-sugeridas", response_model=list[ContaOpcao])
+async def obter_contas_sugeridas(documento_id: str):
+    """
+    Retorna o plano de contas da administradora ordenado por similaridade
+    com o embedding do documento atual.
+    Faz o cálculo vetorial diretamente no Python para evitar erros de tipo (uuid vs varchar) do Supabase RPC.
+    """
+    supabase = _get_supabase()
+
+    result = (
+        supabase.table("documentos_fiscais")
+        .select("administradora_id, embedding")
+        .eq("id", documento_id)
+        .single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+
+    doc = result.data
+    admin_id = doc.get("administradora_id")
+    embedding = doc.get("embedding")
+
+    if not admin_id:
+        return []
+
+    # Busca o plano de contas da administradora com seus embeddings
+    res_contas = (
+        supabase.table("plano_contas")
+        .select("codigo, descricao, embedding")
+        .eq("administradora_id", str(admin_id))
+        .execute()
+    )
+    
+    contas = []
+    if res_contas.data:
+        import json
+        import math
+        
+        # Helper para similaridade do cosseno
+        def cosine_similarity(v1, v2):
+            if not v1 or not v2: return 0.0
+            dot = sum(a * b for a, b in zip(v1, v2))
+            norm1 = math.sqrt(sum(a * a for a in v1))
+            norm2 = math.sqrt(sum(b * b for b in v2))
+            if norm1 == 0 or norm2 == 0: return 0.0
+            return dot / (norm1 * norm2)
+            
+        q_emb = None
+        if embedding:
+            try:
+                q_emb = embedding if isinstance(embedding, list) else json.loads(embedding)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger("validacao_router")
+                logger.error(f"Erro ao parsear embedding do documento: {e}")
+                
+        for c in res_contas.data:
+            sim = None
+            if q_emb and c.get("embedding"):
+                try:
+                    c_emb = c["embedding"] if isinstance(c["embedding"], list) else json.loads(c["embedding"])
+                    sim = cosine_similarity(q_emb, c_emb)
+                except Exception:
+                    pass
+            contas.append({
+                "codigo": c["codigo"],
+                "descricao": c["descricao"],
+                "similarity": sim
+            })
+            
+        if q_emb:
+            # Ordena por similaridade (maior para menor). Contas sem similarity vão pro final.
+            contas.sort(key=lambda x: (x["similarity"] is not None, x["similarity"] or 0.0), reverse=True)
+        else:
+            contas.sort(key=lambda x: x["codigo"])
+            
+        return [
+            ContaOpcao(
+                codigo=c["codigo"],
+                descricao=c["descricao"],
+                similarity=c["similarity"]
+            )
+            for c in contas
+        ]
+    return []
+
+
 @router.patch("/documentos/{documento_id}", response_model=ValidacaoResponse)
-async def validar_documento(documento_id: str, payload: ValidacaoPayload):
+async def validar_documento(documento_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
     """
     Confirma ou rejeita um documento após revisão da usuária.
     - confirmar: salva os dados corrigidos + status = "validado"
@@ -243,56 +340,49 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload):
 
     supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
 
-    if payload.acao == "confirmar" and payload.conta_codigo and payload.fornecedor:
-        import re
-        import asyncio
-        fornec_norm = str(payload.fornecedor).strip().upper()
-        fornec_norm = re.sub(r'\s+', ' ', fornec_norm)
-        
+    if payload.acao == "confirmar" and payload.conta_codigo:
         admin_id = doc.get("administradora_id")
         desc_doc = payload.descricao or ""
         conta_codigo = payload.conta_codigo
         
-        if admin_id:
-            # Dispara background task para o motor semântico
-            asyncio.create_task(_executar_merge_semantico(
+        if admin_id and desc_doc:
+            # Dispara background task para o aprendizado contínuo
+            background_tasks.add_task(
+                _aprender_com_validacao,
                 admin_id=admin_id,
-                fornecedor=fornec_norm,
                 conta_codigo=conta_codigo,
-                nova_descricao=desc_doc
-            ))
+                contexto_documento=desc_doc
+            )
 
     return ValidacaoResponse(ok=True, id=documento_id, status=novo_status)
 
 
-async def _executar_merge_semantico(admin_id: int, fornecedor: str, conta_codigo: str, nova_descricao: str):
+def _aprender_com_validacao(admin_id: int | str, conta_codigo: str, contexto_documento: str):
     import os
     import logging
-    logger = logging.getLogger("merge_semantico")
+    logger = logging.getLogger("aprender_com_validacao")
     
     try:
         supabase = _get_supabase()
         
-        # 1. Busca contexto existente
-        res = supabase.table("plano_contas").select("contexto").eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
+        # 1. Puxa o contexto e descricao atuais da conta em plano_contas
+        res = supabase.table("plano_contas").select("descricao, contexto").eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
         
-        contexto_existente = ""
-        if res.data and res.data[0].get("contexto"):
-            contexto_existente = res.data[0]["contexto"]
+        if not res.data:
+            return
             
-        # 2. Sintetiza novo contexto com Gemini
+        conta_descricao = res.data[0].get("descricao") or ""
+        contexto_atual = res.data[0].get("contexto") or ""
+            
+        # 2. Chama o Gemini pedindo explicitamente o MERGE
         from google import genai
         from google.genai import types
         client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         
         prompt = (
-            f"Você é um motor semântico contábil. Faça o merge do contexto existente com a nova descrição da despesa.\n"
-            f"Conta Contábil: {conta_codigo}\n"
-            f"Contexto Existente: '{contexto_existente}'\n"
-            f"Nova Descrição: '{nova_descricao}'\n\n"
-            f"INSTRUÇÃO ESTRITA: Você DEVE abstrair e omitir quaisquer nomes de prestadores de serviço, empresas, pessoas, datas, meses e locais específicos presentes na Nova Descrição ou no Contexto Existente. "
-            f"Gere um texto descritivo e conciso (máximo 300 caracteres) explicando de forma genérica, conceitual e abrangente a natureza das despesas desta regra.\n"
-            f"Responda APENAS com o novo texto de contexto."
+            f"Incorpore os detalhes deste documento: '{contexto_documento}' "
+            f"ao contexto geral desta conta: '{contexto_atual}'. "
+            f"Retorne apenas o novo contexto consolidado."
         )
         
         resp = client.models.generate_content(
@@ -302,40 +392,24 @@ async def _executar_merge_semantico(admin_id: int, fornecedor: str, conta_codigo
         )
         
         novo_contexto = resp.text.strip()
-        if len(novo_contexto) > 300:
-            novo_contexto = novo_contexto[:297] + "..."
             
-        # 2.5 Gera novo embedding vetorial
+        # 3. Gera o novo embedding usando a regra da Ancoragem de Título
+        texto_ancoragem = f"{conta_descricao} - {novo_contexto}"
         emb_res = client.models.embed_content(
             model="gemini-embedding-2",
-            contents=novo_contexto,
+            contents=texto_ancoragem,
             config=types.EmbedContentConfig(output_dimensionality=768)
         )
         novo_embedding = emb_res.embeddings[0].values
             
-        # 3. Salva no Supabase via UPDATE na tabela plano_contas (já existe, apenas atualizamos o contexto e embedding)
+        # 4. Salva o contexto e embedding atualizados no plano_contas
         supabase.table("plano_contas").update({
             "contexto": novo_contexto,
             "embedding": list(novo_embedding),
-            "criada_por_ia": True,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }).eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
         
-        # 4. Efeito Cascata (Ripple Effect) em lote
-        # Atualiza sugestão de conta de todos os documentos 'pendente' do mesmo fornecedor e admin
-        docs_pendentes = supabase.table("documentos_fiscais").select("id, sugestao_contabil").eq("administradora_id", admin_id).eq("fornecedor", fornecedor).eq("status", "pendente").execute()
-        
-        if docs_pendentes.data:
-            for d in docs_pendentes.data:
-                sugestao = d.get("sugestao_contabil") or {}
-                sugestao["conta_debito_codigo"] = conta_codigo
-                sugestao["origem_sugestao"] = "ripple_effect_merge"
-                
-                supabase.table("documentos_fiscais").update({
-                    "sugestao_contabil": sugestao
-                }).eq("id", d["id"]).execute()
-                
-        logger.info(f"Merge semântico concluído para fornecedor {fornecedor}.")
+        logger.info(f"Aprendizado contínuo concluído para a conta {conta_codigo}.")
         
     except Exception as e:
-        logger.error(f"Erro no merge semântico: {e}")
+        logger.error(f"Erro no aprendizado contínuo: {e}")

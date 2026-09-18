@@ -18,6 +18,8 @@ class DadosExtraidosDTO(BaseModel):
     data_pagamento: str | None = Field(default=None, description="Data no formato YYYY-MM-DD")
     valor_total: float | None = Field(default=None, description="Valor monetário total, já convertido para float")
     descricao: str | None = Field(default=None, description="Descrição dos serviços/produtos")
+    contexto_sintetizado: str | None = Field(default=None, description="Definição contábil do serviço/produto, preservando termos técnicos")
+    url_sefaz_qr: str | None = Field(default=None, description="URL fiscal de Sefaz")
 
 
 class _ExtracaoBrutaSchema(BaseModel):
@@ -33,6 +35,8 @@ class _ExtracaoBrutaSchema(BaseModel):
     data_pagamento: str | None = None
     valor_total_bruto: str | None = None
     descricao: str | None = None
+    contexto_sintetizado: str | None = None
+    url_sefaz_qr: str | None = None
 
 
 def parse_valor_brl(valor_str: str | None) -> float | None:
@@ -82,6 +86,7 @@ class DocumentoParser:
 documento fiscal (nota fiscal, recibo ou fatura) seguindo estas regras
 com atenção:
 
+- PRIORIDADE MÁXIMA: Busque prioritariamente pelas informações do COMPROVANTE DE PAGAMENTO (Pix, TED, boletos pagos), extraindo a 'data exata do pagamento' e o 'valor efetivamente pago'. Caso o documento não possua dados de pagamento, utilize como fallback os dados de emissão e valor da Nota Fiscal/Fatura.
 - valor_total_bruto: o VALOR TOTAL A PAGAR do documento — normalmente o
   campo "VALOR TOTAL DA NOTA", "VALOR TOTAL DO DOCUMENTO" ou equivalente.
   NÃO confunda com "VALOR UNITÁRIO", "V. TOTAL" de um item específico,
@@ -95,7 +100,13 @@ com atenção:
   converta, NÃO faça nenhuma conta — apenas copie o texto do valor.
 - Datas sempre no formato YYYY-MM-DD.
 - Campos que não aparecerem no documento devem ficar nulos, não invente
-  valores."""
+  valores.
+- contexto_sintetizado: Para gerar o contexto_sintetizado, você DEVE remover 
+  nomes próprios (empresas, pessoas) e números, mas DEVE PRESERVAR RIGOROSAMENTE 
+  os termos técnicos e o núcleo do serviço/produto prestado (ex: Autovistoria, 
+  Auditoria, Seguro, Material Elétrico, Hidráulica). O texto deve ser uma definição 
+  contábil precisa do serviço/produto exato.
+- Procure por links fiscais no documento (geralmente sob um QR Code, chave de acesso ou link direto para Sefaz) e preencha url_sefaz_qr apenas com a URL bruta (iniciada em http)."""
 
         response_schema = types.Schema(
             type=types.Type.OBJECT,
@@ -111,12 +122,21 @@ com atenção:
                     description="Valor total da nota, exatamente como impresso, com pontuação original (ex: '105.900,00')",
                 ),
                 "descricao": types.Schema(type=types.Type.STRING, description="Descrição dos serviços/produtos"),
+                "contexto_sintetizado": types.Schema(
+                    type=types.Type.STRING,
+                    description="Definição contábil precisa do serviço/produto, preservando termos técnicos e núcleo da despesa",
+                ),
+                "url_sefaz_qr": types.Schema(
+                    type=types.Type.STRING,
+                    description="URL da Sefaz para verificação do documento, iniciada em http",
+                ),
             },
         )
 
         for attempt in range(1, 4):
             try:
-                response = self.client.models.generate_content(
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
                     model="gemini-3.1-flash-lite",
                     contents=[
                         types.Part.from_bytes(
@@ -149,6 +169,8 @@ com atenção:
             data_pagamento=bruto.data_pagamento,
             valor_total=parse_valor_brl(bruto.valor_total_bruto) or 0.0,
             descricao=bruto.descricao,
+            contexto_sintetizado=bruto.contexto_sintetizado,
+            url_sefaz_qr=bruto.url_sefaz_qr,
         )
 
         return dados_extraidos, hash_arquivo

@@ -50,7 +50,10 @@ async def _processar_documento(supabase, doc: dict) -> None:
         }).eq("id", doc_id).execute()
 
         # Baixa o arquivo do Supabase Storage
-        file_bytes = supabase.storage.from_(bucket).download(storage_path)
+        file_bytes = await asyncio.to_thread(
+            supabase.storage.from_(bucket).download,
+            storage_path
+        )
 
         # Detecta mime type pela extensão
         ext = storage_path.rsplit(".", 1)[-1].lower()
@@ -88,9 +91,11 @@ async def _processar_documento(supabase, doc: dict) -> None:
         conta_nome = "Conta Classificada"
         desc_segura = getattr(dados, "descricao", None) or "serviços prestados"
         fornec_seguro = getattr(dados, "nome_fornecedor", None) or ""
+        contexto_sintetizado = getattr(dados, "contexto_sintetizado", None) or f"{fornec_seguro} {desc_segura}".strip()
         historico_sugerido = f"Vlr. ref. {desc_segura} - {fornec_seguro}"
         score = 0.0
         origem_sugestao = "gemini_inferencia"
+        embedding_val = None
         
         try:
             admin_id = doc.get("administradora_id")
@@ -99,12 +104,14 @@ async def _processar_documento(supabase, doc: dict) -> None:
                 from google.genai import types
                 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
                 
-                texto_busca = f"{fornec_seguro} {desc_segura}".strip()
+                desc_para_ancora = getattr(dados, "descricao", "") or ""
+                texto_busca = f"{desc_para_ancora} - {contexto_sintetizado}"
                 
                 # Gera embedding
                 for attempt in range(1, 4):
                     try:
-                        emb_res = client.models.embed_content(
+                        emb_res = await asyncio.to_thread(
+                            client.models.embed_content,
                             model="gemini-embedding-2",
                             contents=texto_busca,
                             config=types.EmbedContentConfig(output_dimensionality=768)
@@ -116,77 +123,30 @@ async def _processar_documento(supabase, doc: dict) -> None:
                         else:
                             raise e
                 embedding = emb_res.embeddings[0].values
+                embedding_val = embedding
                 
                 # Busca regras no Supabase via vetor
-                # Busca regras no Supabase via vetor
-                res_rag = supabase.rpc("match_plano_contas", {
-                    "query_embedding": list(embedding),
-                    "match_threshold": 0.4,
-                    "match_count": 5,
-                    "p_administradora_id": str(admin_id)
-                }).execute()
+                def _exec_rpc():
+                    return supabase.rpc("match_plano_contas", {
+                        "query_embedding": list(embedding),
+                        "match_threshold": 0.0,
+                        "match_count": 5,
+                        "p_administradora_id": str(admin_id)
+                    }).execute()
+                res_rag = await asyncio.to_thread(_exec_rpc)
                 
                 if res_rag.data:
                     top_match = res_rag.data[0]
-                    # Fast Path relaxado para poupar requisições: se similaridade boa, não chama o Gemini
-                    sim = top_match.get('similarity')
-                    if sim is None:
-                        sim = 0.0
-                    elif isinstance(sim, str) and sim.lower() == 'nan':
-                        sim = 0.0
-                    elif isinstance(sim, float) and math.isnan(sim):
-                        sim = 0.0
-                    else:
-                        sim = float(sim)
+                    conta_codigo = top_match.get('codigo')
+                    conta_nome = top_match.get('descricao', 'N/A')
                     
-                    if sim >= 0.70:
-                        conta_codigo = top_match.get('codigo')
-                        conta_nome = top_match.get('descricao', 'N/A')
-                        score = top_match.get('similarity', 0.90)
-                        origem_sugestao = "rag_fast_path"
+                    sim = top_match.get('similarity')
+                    if sim is None or str(sim).lower() == 'nan' or (isinstance(sim, float) and math.isnan(sim)):
+                        score = 0.0
                     else:
-                        regras_str = ""
-                        for r in res_rag.data:
-                            regras_str += f"Código: {r.get('codigo')} | Conta: {r.get('descricao', 'N/A')} | Contexto: {r.get('contexto', 'N/A')}\n"
-                        
-                        prompt_classificacao = (
-                            f"Você é um assistente contábil. Sua tarefa é julgar a regra contábil perfeita para este documento.\n\n"
-                            f"FORNECEDOR DO DOCUMENTO: '{fornec_seguro}'\n"
-                            f"DESCRIÇÃO DO DOCUMENTO: '{desc_segura}'\n\n"
-                            f"Top 5 Regras Contábeis Sugeridas:\n{regras_str}\n\n"
-                            f"Julgue qual destas 5 regras é a perfeita para a Nota Fiscal.\n"
-                            f"Responda APENAS com o 'Código' da conta escolhida. Se NENHUMA servir, devolva 'nulo'."
-                        )
-                        
-                        for attempt in range(1, 4):
-                            try:
-                                resp = client.models.generate_content(
-                                    model="gemini-3.1-flash-lite",
-                                    contents=[prompt_classificacao],
-                                    config=types.GenerateContentConfig(temperature=0.0)
-                                )
-                                break
-                            except Exception as e:
-                                if attempt < 3 and ("503" in str(e) or "429" in str(e)):
-                                    await asyncio.sleep(2 ** attempt)
-                                else:
-                                    raise e
-                        
-                        sugestao = resp.text.strip()
-                        if sugestao.lower() not in ("null", "nulo", "vazio", "none", ""):
-                            conta_codigo = sugestao
-                            score = top_match.get('similarity', 0.80) # Use similarity of the best match as base
-                            origem_sugestao = "rag_gemini_arbitration"
-                            
-                            nome_res = supabase.table("plano_contas").select("descricao").eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
-                            if nome_res.data:
-                                conta_nome = nome_res.data[0]["descricao"]
-                        else:
-                            # FALLBACK: O Gemini refugou. Use o top_match obrigatóriamente!
-                            conta_codigo = top_match.get('codigo')
-                            conta_nome = top_match.get('descricao', 'N/A')
-                            score = top_match.get('similarity', 0.0)
-                            origem_sugestao = "rag_fallback_top_score"
+                        score = float(sim)
+                    
+                    origem_sugestao = "rag_hyde_match"
                 else:
                     origem_sugestao = "rag_sem_resultado"
         except Exception as e:
@@ -211,7 +171,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
             return d
 
         # Atualiza o registro no banco
-        supabase.table("documentos_fiscais").update({
+        update_data = {
             "status":            "extraido",
             "fornecedor":        dados.nome_fornecedor,
             "cnpj_cpf":          dados.cnpj_cpf_fornecedor,
@@ -225,7 +185,13 @@ async def _processar_documento(supabase, doc: dict) -> None:
             "sugestao_contabil": sugestao_json,
             "extraido_em":       datetime.now(timezone.utc).isoformat(),
             "erro_msg":          None,
-        }).eq("id", doc_id).execute()
+            "contexto":          contexto_sintetizado,
+            "url_sefaz_qr":      getattr(dados, "url_sefaz_qr", None),
+        }
+        if embedding_val:
+            update_data["embedding"] = list(embedding_val)
+
+        supabase.table("documentos_fiscais").update(update_data).eq("id", doc_id).execute()
 
         logger.info(f"[worker] documento {doc_id} extraído com sucesso")
 

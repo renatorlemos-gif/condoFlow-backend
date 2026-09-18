@@ -116,18 +116,35 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
         for i in range(0, len(grupos_list), batch_size):
             lote = grupos_list[i:i+batch_size]
             
+            try:
+                admin_ids = list(set([chave[0] for chave, _ in lote]))
+                contas = list(set([chave[1] for chave, _ in lote]))
+                
+                resp = supabase.table("plano_contas").select("administradora_id,codigo,contexto").in_("administradora_id", admin_ids).in_("codigo", contas).execute()
+                contextos_atuais = {}
+                for row in (resp.data or []):
+                    contextos_atuais[(str(row["administradora_id"]), str(row["codigo"]))] = row.get("contexto", "")
+            except Exception as e:
+                logger.error(f"Erro ao buscar contextos atuais: {e}")
+                contextos_atuais = {}
+            
             dados_para_ia = []
             for idx, (chave, grupo_data) in enumerate(lote):
                 admin_id, conta = chave
+                contexto_atual = contextos_atuais.get((str(admin_id), str(conta)), "")
                 dados_para_ia.append({
                     "id": idx,
                     "conta": conta,
-                    "descricoes": list(grupo_data["descricoes"])
+                    "descricoes": list(grupo_data["descricoes"]),
+                    "contexto_atual": contexto_atual
                 })
                 
             prompt = (
                 "Analise a lista de contas e descrições de balancetes a seguir.\n"
                 "Para cada conta, sintetize um 'contexto' geral consolidado (máximo 300 caracteres) com base nas descrições fornecidas.\n"
+                "INSTRUÇÃO IMPORTANTE SOBRE CONTEXTO ATUAL: Se a conta já possuir um 'contexto_atual' preenchido, você DEVE realizar um MERGE. "
+                "Isto é, integre as novas descrições ao contexto antigo sem perder a essência do que já havia sido consolidado antes. "
+                "O resultado deve ser a evolução do contexto (somando as novas informações ao contexto existente), e não uma substituição cega.\n"
                 "INSTRUÇÃO ESTRITA: Você DEVE abstrair e omitir quaisquer nomes de prestadores de serviço, empresas, pessoas, datas, meses e locais específicos. "
                 "O contexto gerado deve ser uma definição genérica, conceitual e abrangente sobre a natureza da despesa contábil "
                 "(Ex: em vez de 'reparo na garagem por Tarcisio', gere 'Despesas com contratação de mão-de-obra autônoma ou terceirizada para reparos e manutenção em geral').\n"
@@ -172,7 +189,8 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                 contextos_por_id = {item.get("id"): item.get("contexto", "") for item in resultados_list if isinstance(item, dict) and "id" in item}
                 
                 contextos_lote = []
-                for idx, _ in enumerate(lote):
+                textos_vetores_lote = []
+                for idx, (chave, grupo_data) in enumerate(lote):
                     contexto = contextos_por_id.get(idx, "")
                     if not contexto:
                         contexto = "Contexto não gerado pela IA"
@@ -180,9 +198,13 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                         contexto = str(contexto)[:300]
                     contextos_lote.append(contexto)
                     
+                    conta_descricao = grupo_data.get("conta_descricao") or "Conta Contábil"
+                    texto_vetor = f"{conta_descricao} - {contexto}"
+                    textos_vetores_lote.append(texto_vetor)
+                    
                 def chamar_embeddings_individuais():
                     embeddings = []
-                    for texto_individual in contextos_lote:
+                    for texto_individual in textos_vetores_lote:
                         resp = client.models.embed_content(
                             model='gemini-embedding-2',
                             contents=texto_individual,

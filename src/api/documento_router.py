@@ -1,4 +1,5 @@
 import os
+import asyncio
 from datetime import datetime, timezone
 import pymupdf
 
@@ -57,19 +58,26 @@ async def upload_documento_fiscal(
     2. Insere registro em documentos_fiscais com status = "pendente"
     3. Retorna imediatamente — o worker processa a extração em background
     """
-    merged_pdf = pymupdf.open()
+    files_data = []
     for f in files:
         conteudo = await f.read()
-        if f.content_type == "application/pdf":
-            pdf_doc = pymupdf.open("pdf", conteudo)
-            merged_pdf.insert_pdf(pdf_doc)
-        else:
-            img_doc = pymupdf.open("img", conteudo)
-            pdf_bytes = img_doc.convert_to_pdf()
-            pdf_doc = pymupdf.open("pdf", pdf_bytes)
-            merged_pdf.insert_pdf(pdf_doc)
+        files_data.append((conteudo, f.content_type))
+        
+    def _merge_files_sync(files_list):
+        merged_pdf = pymupdf.open()
+        for conteudo, content_type in files_list:
+            if content_type == "application/pdf":
+                pdf_doc = pymupdf.open("pdf", conteudo)
+                merged_pdf.insert_pdf(pdf_doc)
+            else:
+                img_doc = pymupdf.open("img", conteudo)
+                pdf_bytes = img_doc.convert_to_pdf()
+                pdf_doc = pymupdf.open("pdf", pdf_bytes)
+                merged_pdf.insert_pdf(pdf_doc)
+        return merged_pdf.write()
     
-    final_bytes = merged_pdf.write()
+    final_bytes = await asyncio.to_thread(_merge_files_sync, files_data)
+    
     filename = f"doc_{int(datetime.now(timezone.utc).timestamp())}.pdf"
     mime_type = "application/pdf"
 
