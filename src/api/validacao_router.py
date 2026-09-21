@@ -358,58 +358,12 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload, backgr
 
 
 def _aprender_com_validacao(admin_id: int | str, conta_codigo: str, contexto_documento: str):
-    import os
     import logging
+    from src.services.contexto_service import ContextoService
     logger = logging.getLogger("aprender_com_validacao")
     
     try:
         supabase = _get_supabase()
-        
-        # 1. Puxa o contexto e descricao atuais da conta em plano_contas
-        res = supabase.table("plano_contas").select("descricao, contexto").eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
-        
-        if not res.data:
-            return
-            
-        conta_descricao = res.data[0].get("descricao") or ""
-        contexto_atual = res.data[0].get("contexto") or ""
-            
-        # 2. Chama o Gemini pedindo explicitamente o MERGE
-        from google import genai
-        from google.genai import types
-        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-        
-        prompt = (
-            f"Incorpore os detalhes deste documento: '{contexto_documento}' "
-            f"ao contexto geral desta conta: '{contexto_atual}'. "
-            f"Retorne apenas o novo contexto consolidado."
-        )
-        
-        resp = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
-            contents=[prompt],
-            config=types.GenerateContentConfig(temperature=0.0)
-        )
-        
-        novo_contexto = resp.text.strip()
-            
-        # 3. Gera o novo embedding usando a regra da Ancoragem de Título
-        texto_ancoragem = f"{conta_descricao} - {novo_contexto}"
-        emb_res = client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=texto_ancoragem,
-            config=types.EmbedContentConfig(output_dimensionality=768)
-        )
-        novo_embedding = emb_res.embeddings[0].values
-            
-        # 4. Salva o contexto e embedding atualizados no plano_contas
-        supabase.table("plano_contas").update({
-            "contexto": novo_contexto,
-            "embedding": list(novo_embedding),
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }).eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
-        
-        logger.info(f"Aprendizado contínuo concluído para a conta {conta_codigo}.")
-        
+        ContextoService.atualizar_contexto(supabase, str(admin_id), conta_codigo, contexto_documento)
     except Exception as e:
-        logger.error(f"Erro no aprendizado contínuo: {e}")
+        logger.error(f"Erro no aprendizado contnuo: {e}")

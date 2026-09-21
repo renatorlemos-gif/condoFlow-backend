@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from supabase import create_client
 
@@ -57,6 +57,7 @@ class TransacaoComSugestao(BaseModel):
     tipo: str
     banco: str
     condo_nome: str
+    categoria: str | None = None
     
     documentos_conciliados: list[DocumentoConciliadoInfo] = []
     status_conciliacao: Literal["conciliada", "conciliada_em_lote", "sugerida", "pendente"]
@@ -152,6 +153,7 @@ async def listar_transacoes(
     mes_ano: str | None = None,
     banco: str | None = None,
     apenas_pendentes: bool = True,
+    grupos: list[str] = Query(default=[]),
     limit: int = 100,
 ):
     supabase = _get_supabase()
@@ -159,6 +161,8 @@ async def listar_transacoes(
     query = supabase.table("transacoes_extrato").select("*").order("data_transacao", desc=True).limit(limit)
     if banco:
         query = query.eq("banco", banco)
+    if grupos:
+        query = query.in_("metadados->>categoria", grupos)
     if mes_ano:
         import calendar
         inicio = f"{mes_ano}-01"
@@ -252,8 +256,11 @@ async def listar_transacoes(
             if len(concs) > 1:
                 is_lote = True
                 
+            trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]}
+            trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
+            
             resultado.append(TransacaoComSugestao(
-                **{k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]},
+                **trans_dict,
                 documentos_conciliados=docs_info,
                 status_conciliacao="conciliada_em_lote" if is_lote else "conciliada",
                 sugestao=None,
@@ -261,8 +268,11 @@ async def listar_transacoes(
             ))
         else:
             sugestao = sugestoes_por_trans.get(trans["id"])
+            trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]}
+            trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
+            
             resultado.append(TransacaoComSugestao(
-                **{k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]},
+                **trans_dict,
                 documentos_conciliados=[],
                 status_conciliacao="sugerida" if sugestao else "pendente",
                 sugestao=sugestao,

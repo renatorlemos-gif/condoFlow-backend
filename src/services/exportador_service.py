@@ -53,7 +53,11 @@ class ExportadorService:
         writer = csv.writer(output, delimiter=';', lineterminator='\n')
         
         # Cabeçalho opcional (Alterdata geralmente ignora a 1a linha se for texto, mas para segurança podemos omitir ou deixar)
-        writer.writerow(["Data", "Conta Debito", "Conta Credito", "Valor", "Historico"])
+        writer.writerow([
+            "Lançamento Automático", "Conta Débito", "Conta Crédito", "Data", 
+            "Valor", "Código Histórico", "Complemento Histórico", 
+            "Centro Custo Débito", "Centro Custo Crédito", "Número Documento"
+        ])
         
         for t in transacoes:
             data_trans_str = t.get("data_transacao", "")
@@ -84,7 +88,21 @@ class ExportadorService:
                 # Histórico: "Vlr. ref. [Doc] [Forn] conf. [Desc]"
                 historico = f"Vlr. ref. {numero_doc} {fornecedor} conf. {descricao}"
                 
-                writer.writerow([data_fmt, conta_deb, conta_cred, val_fmt, historico])
+                # Layout Padrão Alterdata 10 colunas:
+                # 1: Lançamento Auto, 2: Débito, 3: Crédito, 4: Data, 5: Valor, 
+                # 6: Cód Histórico, 7: Complemento Histórico, 8: CC Débito, 9: CC Crédito, 10: Nº Doc
+                writer.writerow([
+                    "",           # 1. Código Lançamento Automático
+                    conta_deb,    # 2. Conta Débito
+                    conta_cred,   # 3. Conta Crédito
+                    data_fmt,     # 4. Data
+                    val_fmt,      # 5. Valor
+                    "",           # 6. Código do Histórico
+                    historico,    # 7. Complemento Histórico
+                    "",           # 8. Centro Custo Débito
+                    "",           # 9. Centro Custo Crédito
+                    numero_doc    # 10. Número Documento
+                ])
                 
         # Retornar o CSV em bytes com encoding Windows-1252
         return output.getvalue().encode("cp1252", errors="replace")

@@ -12,6 +12,7 @@ Orquestra o processamento de extratos bancários:
 
 import io
 import os
+import re
 from datetime import datetime, timezone
 
 from supabase import create_client
@@ -45,6 +46,11 @@ def _salvar_transacoes(
     for _, row in df.iterrows():
         credito = float(row.get("Crédito (R$)", 0.0) or 0.0)
         debito  = float(row.get("Débito (R$)",  0.0) or 0.0)
+        descricao = str(row.get("Lançamento", "") or "")
+        
+        # Categorização
+        categoria = str(row.get("Categoria", "")).strip()
+        metadados = {"categoria": categoria if categoria else "Sem Categoria"}
 
         # Cada linha vira uma transação — crédito e débito numa mesma linha
         # são raros mas possíveis (ex: estorno parcial). Tratamos separado.
@@ -55,11 +61,11 @@ def _salvar_transacoes(
                 "condo_nome":        condo_nome,
                 "banco":             banco,
                 "data_transacao":    _parse_date(row.get("Data_Valida")),
-                "descricao":         str(row.get("Lançamento", "") or ""),
+                "descricao":         descricao,
                 "valor":             credito,
                 "tipo":              "credito",
                 "storage_path":      storage_path,
-                "metadados":         {"categoria": row.get("Categoria", "")},
+                "metadados":         metadados,
                 "criado_em":         datetime.now(timezone.utc).isoformat(),
             })
 
@@ -70,11 +76,11 @@ def _salvar_transacoes(
                 "condo_nome":        condo_nome,
                 "banco":             banco,
                 "data_transacao":    _parse_date(row.get("Data_Valida")),
-                "descricao":         str(row.get("Lançamento", "") or ""),
+                "descricao":         descricao,
                 "valor":             debito,
                 "tipo":              "debito",
                 "storage_path":      storage_path,
-                "metadados":         {"categoria": row.get("Categoria", "")},
+                "metadados":         metadados,
                 "criado_em":         datetime.now(timezone.utc).isoformat(),
             })
 
@@ -175,3 +181,5 @@ def _mime_from_nome(nome: str) -> str:
         "csv":  "text/csv",
         "ofx":  "application/ofx",
     }.get(ext, "application/octet-stream")
+
+
