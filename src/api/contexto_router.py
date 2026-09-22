@@ -70,3 +70,42 @@ async def listar_condominios(administradora_id: Optional[str] = Query(None)):
             pass
 
     return []
+
+class CompetenciasResponse(BaseModel):
+    condominio_id: str
+    competencias: list[str]
+    ultima_competencia: Optional[str] = None
+
+@router.get("/competencias", response_model=CompetenciasResponse)
+async def listar_competencias(condominio_id: str = Query(..., description="ID do condomínio")):
+    """Retorna as competências (YYYY-MM) com transações disponíveis, ordenadas descrescente."""
+    supabase = _get_supabase()
+    if supabase:
+        try:
+            # Busca apenas a data das transações deste condomínio para agregação
+            res = supabase.table("transacoes_extrato").select("data_transacao").eq("condominio_id", condominio_id).execute()
+            if res.data:
+                competencias_set = set()
+                for item in res.data:
+                    dt = item.get("data_transacao")
+                    if dt and len(dt) >= 7:
+                        competencias_set.add(dt[:7]) # Extrai YYYY-MM
+                
+                competencias = sorted(list(competencias_set), reverse=True)
+                ultima = competencias[0] if competencias else None
+                
+                return CompetenciasResponse(
+                    condominio_id=condominio_id,
+                    competencias=competencias,
+                    ultima_competencia=ultima
+                )
+        except Exception as e:
+            print(f"Erro ao buscar competencias: {e}")
+            pass
+
+    return CompetenciasResponse(
+        condominio_id=condominio_id,
+        competencias=[],
+        ultima_competencia=None
+    )
+

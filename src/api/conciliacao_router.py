@@ -39,6 +39,8 @@ class DocumentoSugestao(BaseModel):
     numero_doc: str | None
     data_emissao: str | None
     valor_total: float | None
+    data_pagamento: str | None = None
+    data_vencimento: str | None = None
     score: float
 
 
@@ -83,6 +85,23 @@ class DocumentoDisponivel(BaseModel):
     data_emissao: str | None
     valor_total: float | None
     descricao: str | None
+
+
+class TransacaoSugeridaInfo(BaseModel):
+    id: str
+    data_transacao: str
+    descricao: str | None
+    valor: float
+    tipo: str
+    banco: str
+    score: float
+
+
+class SugestaoDocumentoResponse(BaseModel):
+    documento_id: str
+    tem_sugestao: bool
+    sugestao: TransacaoSugeridaInfo | None = None
+    total_candidatas: int = 0
 
 
 # ------------------------------------------------------------------ #
@@ -190,7 +209,7 @@ async def listar_transacoes(
 
     docs_result = (
         supabase.table("documentos_fiscais")
-        .select("id, fornecedor, numero_doc, data_emissao, valor_total")
+        .select("id, fornecedor, numero_doc, data_emissao, valor_total, data_pagamento, data_vencimento")
         .eq("status", "validado")
         .execute()
     )
@@ -228,6 +247,8 @@ async def listar_transacoes(
                 numero_doc=doc.get("numero_doc"),
                 data_emissao=doc.get("data_emissao"),
                 valor_total=doc.get("valor_total"),
+                data_pagamento=doc.get("data_pagamento"),
+                data_vencimento=doc.get("data_vencimento"),
                 score=score,
             )
             docs_sugeridos.add(doc["id"])
@@ -427,3 +448,90 @@ async def desfazer_conciliacao(conciliacao_id: str):
     supabase.table("documentos_fiscais").update({"status": "validado"}).eq("id", documento_id).execute()
 
     return {"ok": True, "conciliacao_id": conciliacao_id}
+
+
+@router.get("/sugestoes-documento/{documento_id}", response_model=SugestaoDocumentoResponse)
+async def sugestoes_documento(
+    documento_id: str,
+    mes_ano: str,
+    condominio_id: str | None = None
+):
+    supabase = _get_supabase()
+
+    # Buscar documento
+    doc_result = supabase.table("documentos_fiscais").select("*").eq("id", documento_id).execute()
+    if not doc_result.data:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+    
+    documento = doc_result.data[0]
+    
+    # Resolver condominio_id
+    condo_id_query = condominio_id or documento.get("condominio_id")
+    if not condo_id_query:
+        raise HTTPException(status_code=400, detail="condominio_id não fornecido e documento não possui condominio_id.")
+
+    # Buscar transações no mes_ano para esse condomínio
+    import calendar
+    try:
+        ano, mes = map(int, mes_ano.split("-"))
+        inicio = f"{mes_ano}-01"
+        _, ultimo_dia = calendar.monthrange(ano, mes)
+        fim = f"{mes_ano}-{ultimo_dia:02d}"
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato mes_ano inválido. Use YYYY-MM")
+
+    trans_result = (
+        supabase.table("transacoes_extrato")
+        .select("*")
+        .eq("condominio_id", condo_id_query)
+        .gte("data_transacao", inicio)
+        .lte("data_transacao", fim)
+        .execute()
+    )
+    transacoes = trans_result.data or []
+
+    if not transacoes:
+        return SugestaoDocumentoResponse(documento_id=documento_id, tem_sugestao=False)
+
+    # Excluir transações já conciliadas
+    trans_ids = [t["id"] for t in transacoes]
+    conc_result = supabase.table("conciliacoes").select("transacao_id").in_("transacao_id", trans_ids).execute()
+    ja_conciliadas = {c["transacao_id"] for c in (conc_result.data or [])}
+    
+    trans_livres = [t for t in transacoes if t["id"] not in ja_conciliadas]
+
+    # Calcular score e rankear
+    candidatas = []
+    # Fallback to data_pagamento if available for better score matching, but _calcular_score expects "data_emissao" key
+    doc_for_score = dict(documento)
+    if doc_for_score.get("data_pagamento"):
+        doc_for_score["data_emissao"] = doc_for_score["data_pagamento"]
+
+    for t in trans_livres:
+        score = _calcular_score(t, doc_for_score)
+        if score >= 0.60:
+            candidatas.append((score, t))
+
+    if not candidatas:
+        return SugestaoDocumentoResponse(documento_id=documento_id, tem_sugestao=False)
+
+    # Ordenar por score desc (empate resolvido por data mais recente)
+    candidatas.sort(key=lambda x: (x[0], x[1].get("data_transacao", "")), reverse=True)
+
+    melhor_score, melhor_trans = candidatas[0]
+
+    return SugestaoDocumentoResponse(
+        documento_id=documento_id,
+        tem_sugestao=True,
+        sugestao=TransacaoSugeridaInfo(
+            id=melhor_trans["id"],
+            data_transacao=melhor_trans.get("data_transacao", ""),
+            descricao=melhor_trans.get("descricao"),
+            valor=melhor_trans.get("valor", 0.0),
+            tipo=melhor_trans.get("tipo", ""),
+            banco=melhor_trans.get("banco", ""),
+            score=melhor_score
+        ),
+        total_candidatas=len(candidatas)
+    )
+
