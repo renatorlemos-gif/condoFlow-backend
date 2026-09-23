@@ -42,7 +42,7 @@ class DocumentoResumo(BaseModel):
     numero_doc: str | None
     criado_em: str
     extraido_em: str | None
-
+    competencia: str | None = None
 
 class DocumentoDetalhe(BaseModel):
     id: str
@@ -61,7 +61,8 @@ class DocumentoDetalhe(BaseModel):
     hash_arquivo: str | None
     sugestao_contabil: dict | None
     administradora_id: int | str | None
-    url_sefaz_qr: str | None
+    chave_acesso: str | None
+    competencia: str | None = None
     criado_em: str
     extraido_em: str | None
     erro_msg: str | None
@@ -78,8 +79,9 @@ class ValidacaoPayload(BaseModel):
     data_pagamento: str | None = None
     valor_total: float | None = None
     descricao: str | None = None
+    chave_acesso: str | None = None
+    competencia: str | None = None
     conta_codigo: str | None = None
-
 
 class ValidacaoResponse(BaseModel):
     ok: bool
@@ -105,7 +107,7 @@ async def listar_documentos(
 
     query = (
         supabase.table("documentos_fiscais")
-        .select("id, filename, condo_nome, status, fornecedor, valor_total, data_emissao, numero_doc, criado_em, extraido_em")
+        .select("id, filename, condo_nome, status, fornecedor, valor_total, data_emissao, numero_doc, criado_em, extraido_em, competencia")
         .order("criado_em", desc=True)
         .limit(limit)
     )
@@ -166,7 +168,8 @@ async def detalhe_documento(documento_id: str):
         hash_arquivo=doc.get("hash_arquivo"),
         sugestao_contabil=doc.get("sugestao_contabil"),
         administradora_id=doc.get("administradora_id"),
-        url_sefaz_qr=doc.get("url_sefaz_qr"),
+        chave_acesso=doc.get("chave_acesso"),
+        competencia=doc.get("competencia"),
         criado_em=doc["criado_em"],
         extraido_em=doc.get("extraido_em"),
         erro_msg=doc.get("erro_msg"),
@@ -328,6 +331,8 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload, backgr
             "data_pagamento":  payload.data_pagamento,
             "valor_total":     payload.valor_total,
             "descricao":       payload.descricao,
+            "chave_acesso":    payload.chave_acesso,
+            "competencia":     payload.competencia,
             "erro_msg":        None,
         }
         novo_status = "validado"
@@ -367,3 +372,102 @@ def _aprender_com_validacao(admin_id: int | str, conta_codigo: str, contexto_doc
         ContextoService.atualizar_contexto(supabase, str(admin_id), conta_codigo, contexto_documento)
     except Exception as e:
         logger.error(f"Erro no aprendizado contnuo: {e}")
+
+
+class ScanQrResponse(BaseModel):
+    sucesso: bool
+    url: str | None = None
+    mensagem: str | None = None
+
+
+@router.post("/documentos/{documento_id}/scan-qr", response_model=ScanQrResponse)
+async def scan_qr_code(documento_id: str):
+    """
+    Baixa o arquivo do Supabase, procura por QR Codes e retorna a URL se achar.
+    """
+    import asyncio
+    supabase = _get_supabase()
+
+    result = (
+        supabase.table("documentos_fiscais")
+        .select("id, storage_path, bucket")
+        .eq("id", documento_id)
+        .single()
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+
+    doc = result.data
+    storage_path = doc["storage_path"]
+    bucket = doc.get("bucket", os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "integre"))
+
+    # Baixa o arquivo do Supabase Storage
+    try:
+        file_bytes = await asyncio.to_thread(
+            supabase.storage.from_(bucket).download,
+            storage_path
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao baixar arquivo: {e}")
+
+    ext = storage_path.rsplit(".", 1)[-1].lower()
+    
+    try:
+        import fitz
+        from pyzbar.pyzbar import decode
+        from PIL import Image, ImageEnhance
+        import io
+        
+        urls_encontradas = []
+
+        if ext == "pdf":
+            doc_pdf = fitz.open(stream=file_bytes, filetype="pdf")
+            for page_num in range(len(doc_pdf)):
+                page = doc_pdf.load_page(page_num)
+                zoom = 2.5
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                
+                img = img.convert('L')
+                img = ImageEnhance.Contrast(img).enhance(2.0)
+                img = img.point(lambda p: 255 if p > 128 else 0)
+                
+                decoded_objects = decode(img)
+                for obj in decoded_objects:
+                    url = obj.data.decode('utf-8')
+                    if url.startswith("http"):
+                        urls_encontradas.append(url)
+                
+                if urls_encontradas:
+                    break
+            
+            doc_pdf.close()
+        else:
+            img = Image.open(io.BytesIO(file_bytes))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img = img.convert('L')
+            img = ImageEnhance.Contrast(img).enhance(2.0)
+            img = img.point(lambda p: 255 if p > 128 else 0)
+            
+            decoded_objects = decode(img)
+            for obj in decoded_objects:
+                url = obj.data.decode('utf-8')
+                if url.startswith("http"):
+                    urls_encontradas.append(url)
+
+        if urls_encontradas:
+            return ScanQrResponse(sucesso=True, url=urls_encontradas[0])
+        else:
+            return ScanQrResponse(sucesso=False, mensagem="Nenhum QR Code legível encontrado no documento.")
+            
+    except ImportError:
+        return ScanQrResponse(sucesso=False, mensagem="Bibliotecas de processamento (pyzbar/pymupdf) não estão instaladas no servidor.")
+    except Exception as e:
+        import logging
+        logging.getLogger("validacao_router").error(f"Erro ao escanear QR Code: {e}")
+        return ScanQrResponse(sucesso=False, mensagem=f"Erro ao processar imagem: {e}")
+

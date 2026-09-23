@@ -1,0 +1,1 @@
+ALTER TABLE public.documentos_fiscais DROP COLUMN IF EXISTS url_sefaz_qr;

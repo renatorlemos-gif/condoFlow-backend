@@ -19,8 +19,8 @@ class DadosExtraidosDTO(BaseModel):
     valor_total: float | None = Field(default=None, description="Valor monetário total, já convertido para float")
     descricao: str | None = Field(default=None, description="Descrição dos serviços/produtos")
     contexto_sintetizado: str | None = Field(default=None, description="Definição contábil do serviço/produto, preservando termos técnicos")
-    url_sefaz_qr: str | None = Field(default=None, description="URL fiscal de Sefaz")
-
+    chave_acesso: str | None = Field(default=None, description="Chave de Acesso (44 ou 50 dígitos)")
+    competencia: str | None = Field(default=None, description="Competência no formato MM/YYYY")
 
 class _ExtracaoBrutaSchema(BaseModel):
     """Formato que o Gemini retorna. valor_total_bruto fica como string,
@@ -36,8 +36,8 @@ class _ExtracaoBrutaSchema(BaseModel):
     valor_total_bruto: str | None = None
     descricao: str | None = None
     contexto_sintetizado: str | None = None
-    url_sefaz_qr: str | None = None
-
+    chave_acesso: str | None = None
+    competencia: str | None = None
 
 def parse_valor_brl(valor_str: str | None) -> float | None:
     """Converte um valor no formato brasileiro (ex: 'R$ 105.900,00' ou
@@ -106,7 +106,8 @@ com atenção:
   os termos técnicos e o núcleo do serviço/produto prestado (ex: Autovistoria, 
   Auditoria, Seguro, Material Elétrico, Hidráulica). O texto deve ser uma definição 
   contábil precisa do serviço/produto exato.
-- Procure por links fiscais no documento (geralmente sob um QR Code, chave de acesso ou link direto para Sefaz) e preencha url_sefaz_qr apenas com a URL bruta (iniciada em http)."""
+- Procure pela "Chave de Acesso" (geralmente 44 dígitos para NFe ou 50 dígitos para NFSe Nacional) em TODAS as páginas do documento, especialmente naquelas que se parecem com uma Nota Fiscal, e extraia em 'chave_acesso' (apenas os dígitos numéricos). Se não existir, retorne null.
+- Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade: busque no texto descritivo por termos como 'ref. ao mês de', 'competência', 'período', etc. Como fallback, utilize o mês da data de emissão. Se não for possível determinar, retorne null."""
 
         response_schema = types.Schema(
             type=types.Type.OBJECT,
@@ -126,9 +127,15 @@ com atenção:
                     type=types.Type.STRING,
                     description="Definição contábil precisa do serviço/produto, preservando termos técnicos e núcleo da despesa",
                 ),
-                "url_sefaz_qr": types.Schema(
+                "chave_acesso": types.Schema(
                     type=types.Type.STRING,
-                    description="URL da Sefaz para verificação do documento, iniciada em http",
+                    description="Chave de Acesso da nota fiscal, contendo apenas os 44 ou 50 dígitos numéricos",
+                    nullable=True,
+                ),
+                "competencia": types.Schema(
+                    type=types.Type.STRING,
+                    description="Competência contábil no formato MM/YYYY",
+                    nullable=True,
                 ),
             },
         )
@@ -170,7 +177,8 @@ com atenção:
             valor_total=parse_valor_brl(bruto.valor_total_bruto) or 0.0,
             descricao=bruto.descricao,
             contexto_sintetizado=bruto.contexto_sintetizado,
-            url_sefaz_qr=bruto.url_sefaz_qr,
+            chave_acesso=bruto.chave_acesso,
+            competencia=bruto.competencia,
         )
 
         return dados_extraidos, hash_arquivo

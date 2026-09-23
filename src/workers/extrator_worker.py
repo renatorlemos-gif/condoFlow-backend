@@ -186,7 +186,8 @@ async def _processar_documento(supabase, doc: dict) -> None:
             "extraido_em":       datetime.now(timezone.utc).isoformat(),
             "erro_msg":          None,
             "contexto":          contexto_sintetizado,
-            "url_sefaz_qr":      getattr(dados, "url_sefaz_qr", None),
+            "chave_acesso":      getattr(dados, "chave_acesso", None),
+            "competencia":       getattr(dados, "competencia", None),
         }
         if embedding_val:
             update_data["embedding"] = list(embedding_val)
