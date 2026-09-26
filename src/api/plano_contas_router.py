@@ -1,4 +1,4 @@
-import os
+﻿import os
 import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -14,17 +14,19 @@ def _get_supabase():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_KEY")
     if not url or not key:
-        raise RuntimeError("SUPABASE_URL ou SUPABASE_SERVICE_KEY não configuradas.")
+        raise RuntimeError("SUPABASE_URL ou SUPABASE_SERVICE_KEY nÃ£o configuradas.")
     return create_client(url, key)
 
 def _generate_embedding(text: str) -> list[float]:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY não configurada.")
+        raise RuntimeError("GEMINI_API_KEY nÃ£o configurada.")
     client = genai.Client(api_key=api_key)
+    from google.genai import types
     response = client.models.embed_content(
         model='gemini-embedding-2',
         contents=text,
+        config=types.EmbedContentConfig(output_dimensionality=768)
     )
     return response.embeddings[0].values
 
@@ -48,15 +50,15 @@ async def create_conta(conta: ContaCreate):
         # Valida unicidade
         existing = supabase.table("plano_contas").select("id").eq("administradora_id", conta.administradora_id).eq("codigo", conta.codigo).execute()
         if existing.data:
-            raise HTTPException(status_code=409, detail=f"A conta '{conta.codigo}' já se encontra registrada no Plano de Contas da administradora. Contas inativadas não liberam reaproveitamento de código contábil.")
+            raise HTTPException(status_code=409, detail=f"A conta '{conta.codigo}' jÃ¡ se encontra registrada no Plano de Contas da administradora. Contas inativadas nÃ£o liberam reaproveitamento de cÃ³digo contÃ¡bil.")
             
-        # Gera embedding síncrono
+        # Gera embedding sÃ­ncrono
         texto_ancora = f"{conta.descricao} - {conta.contexto}"
         try:
             embedding = _generate_embedding(texto_ancora)
         except Exception as e:
             logger.error(f"Erro ao gerar embedding: {e}")
-            raise HTTPException(status_code=503, detail="Falha de rede Gemini. Serviço indisponível para vetorização.")
+            raise HTTPException(status_code=503, detail="Falha de rede Gemini. ServiÃ§o indisponÃ­vel para vetorizaÃ§Ã£o.")
             
         nova_conta = {
             "administradora_id": conta.administradora_id,
@@ -85,7 +87,7 @@ async def update_contexto(conta_id: str, update_data: ContaUpdateContexto):
         
         conta_res = supabase.table("plano_contas").select("*").eq("id", conta_id).execute()
         if not conta_res.data:
-            raise HTTPException(status_code=404, detail="Conta não encontrada.")
+            raise HTTPException(status_code=404, detail="Conta nÃ£o encontrada.")
             
         conta = conta_res.data[0]
         descricao = conta["descricao"]
@@ -96,11 +98,12 @@ async def update_contexto(conta_id: str, update_data: ContaUpdateContexto):
             embedding = _generate_embedding(texto_ancora)
         except Exception as e:
             logger.error(f"Erro ao gerar embedding: {e}")
-            raise HTTPException(status_code=503, detail="Falha de rede Gemini. Serviço indisponível para vetorização.")
+            raise HTTPException(status_code=503, detail="Falha de rede Gemini. ServiÃ§o indisponÃ­vel para vetorizaÃ§Ã£o.")
             
         update_payload = {
             "contexto": novo_contexto,
             "embedding": embedding,
+            "criada_por_ia": False,
             "updated_at": datetime.datetime.utcnow().isoformat()
         }
         
@@ -121,10 +124,10 @@ async def delete_conta(conta_id: str):
             res = supabase.table("plano_contas").update({"ativo": False}).eq("id", conta_id).execute()
         except Exception as db_err:
             if "ativo" in str(db_err).lower():
-                 raise HTTPException(status_code=500, detail="Coluna 'ativo' não existe. Por favor, rode a migration SQL do PRD para adicionar a coluna 'ativo' BOOLEAN DEFAULT TRUE.")
+                 raise HTTPException(status_code=500, detail="Coluna 'ativo' nÃ£o existe. Por favor, rode a migration SQL do PRD para adicionar a coluna 'ativo' BOOLEAN DEFAULT TRUE.")
             raise db_err
         
-        return {"mensagem": "Conta Excluída com Sucesso e Removida dos Motores RAG"}
+        return {"mensagem": "Conta ExcluÃ­da com Sucesso e Removida dos Motores RAG"}
         
     except HTTPException:
         raise
@@ -136,10 +139,11 @@ async def delete_conta(conta_id: str):
 async def get_plano_contas(administradora_id: str):
     try:
         supabase = _get_supabase()
-        response = supabase.table("plano_contas").select("id, codigo, descricao, contexto, updated_at").eq("administradora_id", administradora_id).eq("ativo", True).order("codigo").execute()
+        response = supabase.table("plano_contas").select("id, codigo, descricao, contexto, updated_at, criada_por_ia").eq("administradora_id", administradora_id).eq("ativo", True).order("codigo").execute()
         return {"data": response.data}
     except Exception as e:
         logger.error(f"Erro ao buscar plano de contas: {e}")
         if "ativo" in str(e).lower():
-             raise HTTPException(status_code=500, detail="Coluna 'ativo' não existe. Por favor, rode a migration SQL do PRD para adicionar a coluna 'ativo' BOOLEAN DEFAULT TRUE.")
+             raise HTTPException(status_code=500, detail="Coluna 'ativo' nÃ£o existe. Por favor, rode a migration SQL do PRD para adicionar a coluna 'ativo' BOOLEAN DEFAULT TRUE.")
         raise HTTPException(status_code=500, detail="Erro interno ao buscar plano de contas.")
+

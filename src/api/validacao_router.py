@@ -1,4 +1,4 @@
-"""
+﻿"""
 validacao_router.py
 ===================
 Endpoints para a tela de validação de documentos fiscais.
@@ -10,7 +10,7 @@ PATCH /api/v1/validacao/documentos/{id}    — salva correções + confirma/reje
 
 import os
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -61,6 +61,7 @@ class DocumentoDetalhe(BaseModel):
     hash_arquivo: str | None
     sugestao_contabil: dict | None
     administradora_id: int | str | None
+    condominio_id: str | None
     chave_acesso: str | None
     competencia: str | None = None
     criado_em: str
@@ -69,7 +70,7 @@ class DocumentoDetalhe(BaseModel):
 
 
 class ValidacaoPayload(BaseModel):
-    acao: Literal["confirmar", "rejeitar"]
+    acao: Literal["confirmar", "rejeitar", "cancelar"]
     # campos editáveis pela usuária
     fornecedor: str | None = None
     cnpj_cpf: str | None = None
@@ -82,6 +83,7 @@ class ValidacaoPayload(BaseModel):
     chave_acesso: str | None = None
     competencia: str | None = None
     conta_codigo: str | None = None
+    conta_devedora_id: Optional[str] = None
 
 class ValidacaoResponse(BaseModel):
     ok: bool
@@ -168,6 +170,7 @@ async def detalhe_documento(documento_id: str):
         hash_arquivo=doc.get("hash_arquivo"),
         sugestao_contabil=doc.get("sugestao_contabil"),
         administradora_id=doc.get("administradora_id"),
+        condominio_id=doc.get("condominio_id"),
         chave_acesso=doc.get("chave_acesso"),
         competencia=doc.get("competencia"),
         criado_em=doc["criado_em"],
@@ -273,11 +276,15 @@ async def obter_contas_sugeridas(documento_id: str):
 
 @router.patch("/documentos/{documento_id}", response_model=ValidacaoResponse)
 async def validar_documento(documento_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
-    """
-    Confirma ou rejeita um documento após revisão da usuária.
-    - confirmar: salva os dados corrigidos + status = "validado"
-    - rejeitar:  marca status = "erro" (volta para revisão manual)
-    """
+    import traceback
+    try:
+        return await _validar_documento_impl(documento_id, payload, background_tasks)
+    except Exception as e:
+        with open('FATAL_ERR.txt', 'w') as f:
+            f.write(traceback.format_exc())
+        raise
+
+async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
     supabase = _get_supabase()
 
     # Verifica que o documento existe e está no estado certo
@@ -298,6 +305,19 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload, backgr
             status_code=400,
             detail=f"Documento com status '{doc['status']}' não pode ser validado.",
         )
+
+    if payload.acao == "cancelar":
+        update = {
+            "status": "extraido",
+            "erro_msg": None,
+            "conta_devedora_id": None
+        }
+        try:
+            supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
+        except Exception as e:
+            import traceback
+            raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
+        return ValidacaoResponse(ok=True, id=documento_id, status="extraido")
 
     if payload.acao == "confirmar":
         if not payload.conta_codigo or not payload.conta_codigo.strip():
@@ -335,6 +355,8 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload, backgr
             "competencia":     payload.competencia,
             "erro_msg":        None,
         }
+        if payload.conta_devedora_id:
+            update["conta_devedora_id"] = payload.conta_devedora_id
         novo_status = "validado"
     else:
         update = {
@@ -343,7 +365,11 @@ async def validar_documento(documento_id: str, payload: ValidacaoPayload, backgr
         }
         novo_status = "erro"
 
-    supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
+    try:
+        supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
 
     if payload.acao == "confirmar" and payload.conta_codigo:
         admin_id = doc.get("administradora_id")
@@ -470,4 +496,17 @@ async def scan_qr_code(documento_id: str):
         import logging
         logging.getLogger("validacao_router").error(f"Erro ao escanear QR Code: {e}")
         return ScanQrResponse(sucesso=False, mensagem=f"Erro ao processar imagem: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
 

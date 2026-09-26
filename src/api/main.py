@@ -84,6 +84,7 @@ async def processar_extrato(
     administradora_id: str = Form("adm-alpha"),
     condominio_id: str = Form("condo-alpha-01"),
     condo_nome: str = Form(None),
+    conta_bancaria_id: str = Form(None),
 ):
     conteudo_bytes = await file.read()
     nome_original  = file.filename or "extrato.xlsx"
@@ -98,6 +99,7 @@ async def processar_extrato(
             condo_nome=condo_nome_final,
             administradora_id=administradora_id,
             condominio_id=condominio_id,
+            conta_bancaria_id=conta_bancaria_id,
         )
         logger.info(f"Extrato processado: {qtd_transacoes} transações salvas no banco (Condomínio: {condominio_id}).")
     except ValueError as ve:

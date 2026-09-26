@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import os
 import re
 import asyncio
@@ -106,6 +106,7 @@ com atenção:
   os termos técnicos e o núcleo do serviço/produto prestado (ex: Autovistoria, 
   Auditoria, Seguro, Material Elétrico, Hidráulica). O texto deve ser uma definição 
   contábil precisa do serviço/produto exato.
+- A 'descricao' (ou historico) do documento DEVE ser um resumo de, NO MAXIMO, 80 caracteres. E EXPRESSAMENTE PROIBIDO utilizar qualquer virgula (,) nesta descricao. Substitua virgulas por espacos se necessario.
 - Procure pela "Chave de Acesso" (geralmente 44 dígitos para NFe ou 50 dígitos para NFSe Nacional) em TODAS as páginas do documento, especialmente naquelas que se parecem com uma Nota Fiscal, e extraia em 'chave_acesso' (apenas os dígitos numéricos). Se não existir, retorne null.
 - Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade: busque no texto descritivo por termos como 'ref. ao mês de', 'competência', 'período', etc. Como fallback, utilize o mês da data de emissão. Se não for possível determinar, retorne null."""
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 conciliacao_router.py
 =====================
 Endpoints para a tela de conciliação bancária.
@@ -366,7 +366,7 @@ async def conciliar(payload: ConciliarPayload):
         )
 
     # Busca valores para validar Delta Zero
-    trans_data = supabase.table("transacoes_extrato").select("valor").in_("id", payload.transacoes_ids).execute().data or []
+    trans_data = supabase.table("transacoes_extrato").select("valor, conta_bancaria_id").in_("id", payload.transacoes_ids).execute().data or []
     docs_data = supabase.table("documentos_fiscais").select("valor_total").in_("id", payload.documentos_ids).execute().data or []
 
     total_trans = sum(float(t.get("valor") or 0) for t in trans_data)
@@ -534,4 +534,5 @@ async def sugestoes_documento(
         ),
         total_candidatas=len(candidatas)
     )
+
 

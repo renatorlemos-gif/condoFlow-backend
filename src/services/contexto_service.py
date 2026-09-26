@@ -102,6 +102,7 @@ class ContextoService:
             supabase.table("plano_contas").update({
                 "contexto": novo_contexto,
                 "embedding": list(novo_embedding),
+                "criada_por_ia": True,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
 

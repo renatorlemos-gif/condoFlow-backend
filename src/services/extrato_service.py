@@ -35,6 +35,7 @@ def _salvar_transacoes(
     storage_path: str,
     administradora_id: str = "adm-alpha",
     condominio_id: str = "condo-alpha-01",
+    conta_bancaria_id: str = None,
 ) -> int:
     """
     Persiste as transações do DataFrame em transacoes_extrato com contexto de administradora e condomínio.
@@ -52,10 +53,10 @@ def _salvar_transacoes(
         categoria = str(row.get("Categoria", "")).strip()
         metadados = {"categoria": categoria if categoria else "Sem Categoria"}
 
-        # Cada linha vira uma transação — crédito e débito numa mesma linha
+        # Cada linha vira uma transação – crédito e débito numa mesma linha
         # são raros mas possíveis (ex: estorno parcial). Tratamos separado.
         if credito > 0:
-            registros.append({
+            reg = {
                 "administradora_id": administradora_id,
                 "condominio_id":     condominio_id,
                 "condo_nome":        condo_nome,
@@ -67,10 +68,13 @@ def _salvar_transacoes(
                 "storage_path":      storage_path,
                 "metadados":         metadados,
                 "criado_em":         datetime.now(timezone.utc).isoformat(),
-            })
+            }
+            if conta_bancaria_id:
+                reg["conta_bancaria_id"] = conta_bancaria_id
+            registros.append(reg)
 
         if debito > 0:
-            registros.append({
+            reg = {
                 "administradora_id": administradora_id,
                 "condominio_id":     condominio_id,
                 "condo_nome":        condo_nome,
@@ -82,7 +86,10 @@ def _salvar_transacoes(
                 "storage_path":      storage_path,
                 "metadados":         metadados,
                 "criado_em":         datetime.now(timezone.utc).isoformat(),
-            })
+            }
+            if conta_bancaria_id:
+                reg["conta_bancaria_id"] = conta_bancaria_id
+            registros.append(reg)
 
     if registros:
         supabase.table("transacoes_extrato").insert(registros).execute()
@@ -108,13 +115,18 @@ async def processar_e_persistir(
     condo_nome: str,
     administradora_id: str = "adm-alpha",
     condominio_id: str = "condo-alpha-01",
+    conta_bancaria_id: str = None,
 ) -> tuple[io.BytesIO, str, int]:
     """
     Ponto de entrada principal. Retorna (excel_io, nome_saida, qtd_transacoes).
-
-    O XLSX é retornado para download imediato — mesmo comportamento atual.
-    A persistência no banco é feita em paralelo, com isolamento multi-condomínio.
     """
+    # Se recebemos ID, mas o banco venha em branco ou divergente, 
+    # podemos pegar o banco real da tabela
+    if conta_bancaria_id:
+        supabase = _get_supabase()
+        res = supabase.table("contas_bancarias").select("banco").eq("id", conta_bancaria_id).execute()
+        if res.data:
+            banco = res.data[0].get("banco", banco)
 
     # 1. Salva o arquivo original no Supabase Storage
     mime_original = _mime_from_nome(nome_arquivo)
@@ -149,6 +161,7 @@ async def processar_e_persistir(
             storage_path=storage_path,
             administradora_id=administradora_id,
             condominio_id=condominio_id,
+            conta_bancaria_id=conta_bancaria_id,
         )
 
     return excel_io, nome_saida, qtd
@@ -159,18 +172,19 @@ def _chamar_parser(conteudo_bytes, nome_arquivo, banco):
     Chama o parser correto e retorna (df, excel_io, nome_saida).
     Suporte a Bradesco, Santander e Itaú.
     """
-    banco = banco.strip().lower()
-    if banco == "bradesco":
+    banco_str = banco.strip().lower()
+    
+    if "bradesco" in banco_str:
         from src.utils.bradesco_parser import processar_extrato_bradesco_bytes
         return processar_extrato_bradesco_bytes(conteudo_bytes, nome_arquivo)
-    elif banco == "santander":
+    elif "santander" in banco_str:
         from src.utils.santander_parser import processar_extrato_santander_bytes
         return processar_extrato_santander_bytes(conteudo_bytes, nome_arquivo)
-    elif banco == "itau":
+    elif "itau" in banco_str or "itaú" in banco_str:
         from src.utils.itau_parser import processar_extrato_itau_bytes
         return processar_extrato_itau_bytes(conteudo_bytes, nome_arquivo)
     else:
-        raise ValueError(f"Banco não suportado: '{banco}'")
+        raise ValueError(f"Banco não suportado ou parser não encontrado para: '{banco}'")
 
 
 def _mime_from_nome(nome: str) -> str:
@@ -181,5 +195,3 @@ def _mime_from_nome(nome: str) -> str:
         "csv":  "text/csv",
         "ofx":  "application/ofx",
     }.get(ext, "application/octet-stream")
-
-
