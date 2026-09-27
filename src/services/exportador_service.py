@@ -219,9 +219,8 @@ class ExportadorService:
             
             part_5 = f"{historico:<80}"[:80]
             part_6 = f"{val_cents:0>8}"[-8:]
-            part_7 = "  "
             
-            linha = f"{part_0},{part_1},{part_2},{part_3},{part_4},{part_5},{part_6},{part_7}\n"
+            linha = f"{part_0},{part_1},{part_2},{part_3},{part_4},{part_5},{part_6}\n"
             output.write(linha)
             
         return output.getvalue().encode("cp1252", errors="replace")
