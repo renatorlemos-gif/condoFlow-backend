@@ -216,7 +216,7 @@ async def rodar_worker() -> None:
             # Busca documentos pendentes (máx 5 por ciclo para não sobrecarregar)
             result = (
                 supabase.table("documentos_fiscais")
-                .select("id, bucket, storage_path, filename, condo_nome, condominio_id, administradora_id")
+                .select("id, bucket, storage_path, filename, condominio_id, administradora_id")
                 .in_("status", ["pendente", "extraindo"])
                 .order("criado_em")
                 .limit(5)

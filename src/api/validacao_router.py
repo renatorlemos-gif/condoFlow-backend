@@ -1,4 +1,4 @@
-﻿"""
+"""
 validacao_router.py
 ===================
 Endpoints para a tela de validação de documentos fiscais.
@@ -34,7 +34,7 @@ def _get_supabase():
 class DocumentoResumo(BaseModel):
     id: str
     filename: str
-    condo_nome: str
+    condo_nome: str | None = None
     status: str
     fornecedor: str | None
     valor_total: float | None
@@ -43,11 +43,15 @@ class DocumentoResumo(BaseModel):
     criado_em: str
     extraido_em: str | None
     competencia: str | None = None
+    conta_devedora_codigo: str | None = None
+    conta_devedora_descricao: str | None = None
+    conta_codigo: str | None = None
+    conta_credora_descricao: str | None = None
 
 class DocumentoDetalhe(BaseModel):
     id: str
     filename: str
-    condo_nome: str
+    condo_nome: str | None = None
     status: str
     foto_url: str | None          # URL assinada (1h) para exibir a foto
     fornecedor: str | None
@@ -95,10 +99,10 @@ class ValidacaoResponse(BaseModel):
 #  Endpoints                                                          #
 # ------------------------------------------------------------------ #
 
-@router.get("/documentos", response_model=list[DocumentoResumo])
+@router.get("/documentos", response_model=list[dict])
 async def listar_documentos(
     status: str = "extraido",   # filtro padrão: só os prontos pra validar
-    limit: int = 50,
+    limit: int = 500,
 ):
     """
     Lista documentos fiscais filtrados por status.
@@ -109,16 +113,41 @@ async def listar_documentos(
 
     query = (
         supabase.table("documentos_fiscais")
-        .select("id, filename, condo_nome, status, fornecedor, valor_total, data_emissao, numero_doc, criado_em, extraido_em, competencia")
+        .select("id, filename, administradora_id, condominio_id, status, fornecedor, valor_total, data_emissao, data_pagamento, numero_doc, criado_em, extraido_em, competencia, conta_codigo, plano_contas!conta_devedora_id(codigo, descricao)")
         .order("criado_em", desc=True)
         .limit(limit)
     )
 
     if status != "todos":
-        query = query.eq("status", status)
+        if "," in status:
+            statuses = [s.strip() for s in status.split(",")]
+            query = query.in_("status", statuses)
+        else:
+            query = query.eq("status", status)
 
     result = query.execute()
-    return result.data or []
+    docs = result.data or []
+
+    # Get unique administradora_ids to fetch plano_contas descriptions
+    admin_ids = list(set([d.get("administradora_id") for d in docs if d.get("administradora_id")]))
+    plano_contas_map = {}
+    if admin_ids:
+        pc_result = supabase.table("plano_contas").select("administradora_id, codigo, descricao").in_("administradora_id", admin_ids).execute()
+        for pc in (pc_result.data or []):
+            plano_contas_map[(pc["administradora_id"], pc["codigo"])] = pc["descricao"]
+    
+    for d in docs:
+        c_dev = d.get("plano_contas") or {}
+        d["conta_devedora_codigo"] = c_dev.get("codigo")
+        d["conta_devedora_descricao"] = c_dev.get("descricao")
+        d.pop("plano_contas", None)
+        
+        # map conta_credora (which uses conta_codigo)
+        admin_id = d.get("administradora_id")
+        cc_codigo = d.get("conta_codigo")
+        d["conta_credora_descricao"] = plano_contas_map.get((admin_id, cc_codigo)) if admin_id and cc_codigo else None
+
+    return docs
 
 
 @router.get("/documentos/{documento_id}", response_model=DocumentoDetalhe)
@@ -357,6 +386,8 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
         }
         if payload.conta_devedora_id:
             update["conta_devedora_id"] = payload.conta_devedora_id
+        if payload.conta_codigo:
+            update["conta_codigo"] = payload.conta_codigo
         novo_status = "validado"
     else:
         update = {

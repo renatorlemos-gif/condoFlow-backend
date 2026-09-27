@@ -1,4 +1,4 @@
-﻿"""
+"""
 conciliacao_router.py
 =====================
 Endpoints para a tela de conciliação bancária.
@@ -404,7 +404,19 @@ async def conciliar(payload: ConciliarPayload):
     conciliacao_id_ref = result.data[0]["id"]
 
     # Atualiza documentos
-    supabase.table("documentos_fiscais").update({"status": "conciliado"}).in_("id", payload.documentos_ids).execute()
+    plano_conta_id = None
+    if trans_data:
+        conta_bancaria_id = trans_data[0].get("conta_bancaria_id")
+        if conta_bancaria_id:
+            cb_data = supabase.table("contas_bancarias").select("plano_conta_id").eq("id", conta_bancaria_id).execute().data
+            if cb_data and cb_data[0].get("plano_conta_id"):
+                plano_conta_id = cb_data[0]["plano_conta_id"]
+
+    update_doc = {"status": "conciliado"}
+    if plano_conta_id:
+        update_doc["conta_devedora_id"] = plano_conta_id
+
+    supabase.table("documentos_fiscais").update(update_doc).in_("id", payload.documentos_ids).execute()
 
     return ConciliarResponse(ok=True, conciliacao_id=lote_id if is_lote else conciliacao_id_ref)
 
