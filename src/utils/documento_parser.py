@@ -106,7 +106,14 @@ com atenção:
   os termos técnicos e o núcleo do serviço/produto prestado (ex: Autovistoria, 
   Auditoria, Seguro, Material Elétrico, Hidráulica). O texto deve ser uma definição 
   contábil precisa do serviço/produto exato.
-- A 'descricao' deve ser um texto descritivo inteligível com NO MÁXIMO 80 caracteres. Regras obrigatórias: (1) Escreva em português com acentuação correta (ex: "Renovação de certificado digital"); (2) Use capitalização normal de frase - apenas a primeira palavra em maiúscula, o restante em minúsculas, exceto nomes próprios; (3) Nunca use CAIXA ALTA em toda a frase; (4) NÃO corte o texto abruptamente - escreva uma versão resumida que faça sentido completo dentro do limite; (5) É EXPRESSAMENTE PROIBIDO utilizar qualquer vírgula (,) - substitua por espaço se necessário.
+- A 'descricao' deve ser formulada seguindo ESTRITAMENTE estas regras de negócio:
+  (1) Salários/Adiantamentos: "{Tipo} {Nome Completo do Funcionário}".
+  (2) Documentos fiscais: "{Nome do Fornecedor (PF ou PJ)} {Tipo de documento (NF, NFe, NFCe, etc)} {Número}".
+  (3) Serviços gerais/PF: "{Nome da pessoa} ref. {descrição resumida}".
+  (4) Parcelamentos: Se o documento indicar parcelamento, inclua no fim " - parcela X/Y".
+  (5) LIMITE ESTRITO: O texto da descrição NUNCA deve ultrapassar 80 caracteres. SEMPRE SUCINTO. Não corte abruptamente, crie uma versão resumida com sentido completo.
+  (6) Formatação: Escreva em português. Use capitalização normal de frase (só primeira letra em maiúscula, exceto nomes próprios). NUNCA use CAIXA ALTA em toda a frase.
+  (7) É EXPRESSAMENTE PROIBIDO utilizar qualquer vírgula (,) - substitua por espaço se necessário.
 - Procure pela "Chave de Acesso" (geralmente 44 dígitos para NFe ou 50 dígitos para NFSe Nacional) em TODAS as páginas do documento, especialmente naquelas que se parecem com uma Nota Fiscal, e extraia em 'chave_acesso' (apenas os dígitos numéricos). Se não existir, retorne null.
 - Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade: busque no texto descritivo por termos como 'ref. ao mês de', 'competência', 'período', etc. Como fallback, utilize o mês da data de emissão. Se não for possível determinar, retorne null."""
 
