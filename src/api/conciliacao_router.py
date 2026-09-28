@@ -58,7 +58,6 @@ class TransacaoComSugestao(BaseModel):
     valor: float
     tipo: str
     banco: str
-    condo_nome: str
     categoria: str | None = None
     
     documentos_conciliados: list[DocumentoConciliadoInfo] = []
@@ -277,7 +276,7 @@ async def listar_transacoes(
             if len(concs) > 1:
                 is_lote = True
                 
-            trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]}
+            trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco"]}
             trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
             
             resultado.append(TransacaoComSugestao(
@@ -289,7 +288,7 @@ async def listar_transacoes(
             ))
         else:
             sugestao = sugestoes_por_trans.get(trans["id"])
-            trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco","condo_nome"]}
+            trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco"]}
             trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
             
             resultado.append(TransacaoComSugestao(

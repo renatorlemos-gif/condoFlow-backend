@@ -34,7 +34,6 @@ def _get_supabase():
 class DocumentoResumo(BaseModel):
     id: str
     filename: str
-    condo_nome: str | None = None
     status: str
     fornecedor: str | None
     valor_total: float | None
@@ -51,7 +50,6 @@ class DocumentoResumo(BaseModel):
 class DocumentoDetalhe(BaseModel):
     id: str
     filename: str
-    condo_nome: str | None = None
     status: str
     foto_url: str | None          # URL assinada (1h) para exibir a foto
     fornecedor: str | None
@@ -185,7 +183,6 @@ async def detalhe_documento(documento_id: str):
     return DocumentoDetalhe(
         id=doc["id"],
         filename=doc["filename"],
-        condo_nome=doc["condo_nome"],
         status=doc["status"],
         foto_url=foto_url,
         fornecedor=doc.get("fornecedor"),

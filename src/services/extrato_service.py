@@ -31,7 +31,6 @@ def _get_supabase():
 def _salvar_transacoes(
     df,
     banco: str,
-    condo_nome: str,
     storage_path: str,
     administradora_id: str = "adm-alpha",
     condominio_id: str = "condo-alpha-01",
@@ -59,7 +58,6 @@ def _salvar_transacoes(
             reg = {
                 "administradora_id": administradora_id,
                 "condominio_id":     condominio_id,
-                "condo_nome":        condo_nome,
                 "banco":             banco,
                 "data_transacao":    _parse_date(row.get("Data_Valida")),
                 "descricao":         descricao,
@@ -77,7 +75,6 @@ def _salvar_transacoes(
             reg = {
                 "administradora_id": administradora_id,
                 "condominio_id":     condominio_id,
-                "condo_nome":        condo_nome,
                 "banco":             banco,
                 "data_transacao":    _parse_date(row.get("Data_Valida")),
                 "descricao":         descricao,
@@ -112,7 +109,6 @@ async def processar_e_persistir(
     conteudo_bytes: bytes,
     nome_arquivo: str,
     banco: str,
-    condo_nome: str,
     administradora_id: str = "adm-alpha",
     condominio_id: str = "condo-alpha-01",
     conta_bancaria_id: str = None,
@@ -134,7 +130,7 @@ async def processar_e_persistir(
         file_bytes=conteudo_bytes,
         filename=nome_arquivo,
         mime_type=mime_original,
-        condo_nome=condo_nome,
+        prefixo=condominio_id,
     )
     storage_path = storage_result["path"]
 
@@ -147,7 +143,7 @@ async def processar_e_persistir(
     upload_extrato_processado(
         file_bytes=xlsx_bytes,
         filename=nome_saida,
-        condo_nome=condo_nome,
+        prefixo=condominio_id,
     )
     excel_io.seek(0)  # rebobina para o download
 
@@ -157,7 +153,6 @@ async def processar_e_persistir(
         qtd = _salvar_transacoes(
             df=df,
             banco=banco,
-            condo_nome=condo_nome,
             storage_path=storage_path,
             administradora_id=administradora_id,
             condominio_id=condominio_id,

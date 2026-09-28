@@ -49,7 +49,7 @@ def upload_documento(
     file_bytes: bytes,
     filename: str,
     mime_type: str,
-    condo_nome: str | None = None,
+    prefixo: str | None = None,
 ) -> dict:
     """
     Salva foto ou PDF de documento fiscal no Supabase Storage.
@@ -62,7 +62,7 @@ def upload_documento(
     """
     supabase = _get_supabase()
     bucket   = os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "condominios")
-    condo    = (condo_nome or os.environ.get("CONDO_NOME", "condominio")).strip()
+    condo    = (prefixo or os.environ.get("CONDO_NOME", "condominio")).strip()
     prefix   = _slugify(condo)
     path     = f"documentos/{_build_filename(prefix, filename)}"
 
@@ -87,7 +87,7 @@ def upload_extrato(
     file_bytes: bytes,
     filename: str,
     mime_type: str,
-    condo_nome: str | None = None,
+    prefixo: str | None = None,
 ) -> dict:
     """
     Salva o arquivo original de extrato bancário enviado pelo usuário.
@@ -98,7 +98,7 @@ def upload_extrato(
     """
     supabase = _get_supabase()
     bucket   = os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "condominios")
-    condo    = (condo_nome or os.environ.get("CONDO_NOME", "condominio")).strip()
+    condo    = (prefixo or os.environ.get("CONDO_NOME", "condominio")).strip()
     prefix   = _slugify(condo)
     path     = f"extratos/{_build_filename(prefix, filename)}"
 
@@ -122,7 +122,7 @@ def upload_extrato(
 def upload_extrato_processado(
     file_bytes: bytes,
     filename: str,
-    condo_nome: str | None = None,
+    prefixo: str | None = None,
 ) -> dict:
     """
     Salva o XLSX consolidado gerado pelo processamento do extrato.
@@ -133,7 +133,7 @@ def upload_extrato_processado(
     """
     supabase  = _get_supabase()
     bucket    = os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "condominios")
-    condo     = (condo_nome or os.environ.get("CONDO_NOME", "condominio")).strip()
+    condo     = (prefixo or os.environ.get("CONDO_NOME", "condominio")).strip()
     prefix    = _slugify(condo)
     path      = f"extratos-processados/{_build_filename(prefix, filename)}"
     mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

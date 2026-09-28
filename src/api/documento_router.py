@@ -87,7 +87,7 @@ async def upload_documento_fiscal(
             file_bytes=final_bytes,
             filename=filename,
             mime_type=mime_type,
-            condo_nome=condominio_id,
+            prefixo=condominio_id,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -100,7 +100,6 @@ async def upload_documento_fiscal(
         insert = supabase.table("documentos_fiscais").insert({
             "administradora_id": administradora_id,
             "condominio_id": condominio_id,
-            "condo_nome":   "",
             "bucket":       resultado["bucket"],
             "storage_path": resultado["path"],
             "filename":     filename,

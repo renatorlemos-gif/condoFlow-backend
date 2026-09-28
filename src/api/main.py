@@ -83,12 +83,10 @@ async def processar_extrato(
     banco: str = Form(...),
     administradora_id: str = Form("adm-alpha"),
     condominio_id: str = Form("condo-alpha-01"),
-    condo_nome: str = Form(None),
     conta_bancaria_id: str = Form(None),
 ):
     conteudo_bytes = await file.read()
     nome_original  = file.filename or "extrato.xlsx"
-    condo_nome_final = condo_nome or os.environ.get("CONDO_NOME", "Condominio")
 
     try:
         from src.services.extrato_service import processar_e_persistir
@@ -96,7 +94,6 @@ async def processar_extrato(
             conteudo_bytes=conteudo_bytes,
             nome_arquivo=nome_original,
             banco=banco,
-            condo_nome=condo_nome_final,
             administradora_id=administradora_id,
             condominio_id=condominio_id,
             conta_bancaria_id=conta_bancaria_id,
