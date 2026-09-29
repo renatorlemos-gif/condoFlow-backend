@@ -44,7 +44,7 @@ class DocumentoResumo(BaseModel):
     competencia: str | None = None
     conta_devedora_codigo: str | None = None
     conta_devedora_descricao: str | None = None
-    conta_codigo: str | None = None
+    fonte_pagadora_id: str | None = None
     conta_credora_descricao: str | None = None
 
 class DocumentoDetalhe(BaseModel):
@@ -84,8 +84,8 @@ class ValidacaoPayload(BaseModel):
     descricao: str | None = None
     chave_acesso: str | None = None
     competencia: str | None = None
-    conta_codigo: str | None = None
-    conta_devedora_id: Optional[str] = None
+    fonte_pagadora_id: str | None = None
+    conta_despesa_id: Optional[str] = None
 
 class ValidacaoResponse(BaseModel):
     ok: bool
@@ -110,8 +110,8 @@ async def listar_documentos(
     supabase = _get_supabase()
 
     query = (
-        supabase.table("documentos_fiscais")
-        .select("id, filename, administradora_id, condominio_id, status, fornecedor, valor_total, data_emissao, data_pagamento, numero_doc, criado_em, extraido_em, competencia, conta_codigo, plano_contas!conta_devedora_id(codigo, descricao)")
+        supabase.table("despesas")
+        .select("id, filename, administradora_id, condominio_id, status, fornecedor, valor_total, data_emissao, data_pagamento, numero_doc, criado_em, extraido_em, competencia, fonte_pagadora_id, plano_contas!conta_despesa_id(codigo_contabil, descricao)")
         .order("criado_em", desc=True)
         .limit(limit)
     )
@@ -130,20 +130,36 @@ async def listar_documentos(
     admin_ids = list(set([d.get("administradora_id") for d in docs if d.get("administradora_id")]))
     plano_contas_map = {}
     if admin_ids:
-        pc_result = supabase.table("plano_contas").select("administradora_id, codigo, descricao").in_("administradora_id", admin_ids).execute()
+        pc_result = supabase.table("plano_contas").select("administradora_id, codigo_contabil, descricao").in_("administradora_id", admin_ids).execute()
         for pc in (pc_result.data or []):
-            plano_contas_map[(pc["administradora_id"], pc["codigo"])] = pc["descricao"]
+            plano_contas_map[(pc["administradora_id"], pc["codigo_contabil"])] = pc["descricao"]
     
+    # Map fontes_pagadoras
+    fontes_ids = list(set([d.get("fonte_pagadora_id") for d in docs if d.get("fonte_pagadora_id")]))
+    fontes_map = {}
+    if fontes_ids:
+        fontes_result = supabase.table("fontes_pagadoras").select("id, nome, plano_contas(codigo_contabil, descricao)").in_("id", fontes_ids).execute()
+        for f in (fontes_result.data or []):
+            pc = f.get("plano_contas") or {}
+            cod = pc.get("codigo_contabil")
+            desc = pc.get("descricao")
+            if cod and desc:
+                fontes_map[f["id"]] = f"{cod} - {desc}"
+            elif cod:
+                fontes_map[f["id"]] = cod
+            else:
+                fontes_map[f["id"]] = f["nome"]
+            
     for d in docs:
         c_dev = d.get("plano_contas") or {}
-        d["conta_devedora_codigo"] = c_dev.get("codigo")
+        d["conta_devedora_codigo"] = c_dev.get("codigo_contabil")
         d["conta_devedora_descricao"] = c_dev.get("descricao")
         d.pop("plano_contas", None)
         
-        # map conta_credora (which uses conta_codigo)
-        admin_id = d.get("administradora_id")
-        cc_codigo = d.get("conta_codigo")
-        d["conta_credora_descricao"] = plano_contas_map.get((admin_id, cc_codigo)) if admin_id and cc_codigo else None
+        # map conta_credora (which uses fonte_pagadora_id)
+        f_id = d.get("fonte_pagadora_id")
+        d["conta_codigo"] = None
+        d["conta_credora_descricao"] = fontes_map.get(f_id) if f_id else None
 
     return docs
 
@@ -157,7 +173,7 @@ async def detalhe_documento(documento_id: str):
     supabase = _get_supabase()
 
     result = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("*")
         .eq("id", documento_id)
         .single()
@@ -206,7 +222,8 @@ async def detalhe_documento(documento_id: str):
 
 
 class ContaOpcao(BaseModel):
-    codigo: str
+    id: str
+    codigo_contabil: str
     descricao: str
     similarity: float | None = None
 
@@ -221,7 +238,7 @@ async def obter_contas_sugeridas(documento_id: str):
     supabase = _get_supabase()
 
     result = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("administradora_id, embedding")
         .eq("id", documento_id)
         .single()
@@ -241,7 +258,7 @@ async def obter_contas_sugeridas(documento_id: str):
     # Busca o plano de contas da administradora com seus embeddings
     res_contas = (
         supabase.table("plano_contas")
-        .select("codigo, descricao, embedding")
+        .select("id, codigo_contabil, descricao, embedding")
         .eq("administradora_id", str(admin_id))
         .execute()
     )
@@ -278,7 +295,8 @@ async def obter_contas_sugeridas(documento_id: str):
                 except Exception:
                     pass
             contas.append({
-                "codigo": c["codigo"],
+                "id": c["id"],
+                "codigo_contabil": c["codigo_contabil"],
                 "descricao": c["descricao"],
                 "similarity": sim
             })
@@ -287,11 +305,12 @@ async def obter_contas_sugeridas(documento_id: str):
             # Ordena por similaridade (maior para menor). Contas sem similarity vão pro final.
             contas.sort(key=lambda x: (x["similarity"] is not None, x["similarity"] or 0.0), reverse=True)
         else:
-            contas.sort(key=lambda x: x["codigo"])
+            contas.sort(key=lambda x: x["codigo_contabil"])
             
         return [
             ContaOpcao(
-                codigo=c["codigo"],
+                id=c["id"],
+                codigo_contabil=c["codigo_contabil"],
                 descricao=c["descricao"],
                 similarity=c["similarity"]
             )
@@ -315,7 +334,7 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
 
     # Verifica que o documento existe e está no estado certo
     result = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("id, status, condominio_id, administradora_id")
         .eq("id", documento_id)
         .single()
@@ -336,29 +355,32 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
         update = {
             "status": "extraido",
             "erro_msg": None,
-            "conta_devedora_id": None
+            "conta_despesa_id": None
         }
         try:
-            supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
+            supabase.table("despesas").update(update).eq("id", documento_id).execute()
         except Exception as e:
             import traceback
             raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
         return ValidacaoResponse(ok=True, id=documento_id, status="extraido")
 
     if payload.acao == "confirmar":
-        if not payload.conta_codigo or not payload.conta_codigo.strip():
+        if not payload.conta_despesa_id or not payload.conta_despesa_id.strip():
             raise HTTPException(
                 status_code=400,
                 detail="A conta contábil é obrigatória para validação."
             )
             
+        if not payload.fonte_pagadora_id or not payload.fonte_pagadora_id.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="A fonte pagadora (Conta Crédito) é obrigatória para validação."
+            )
+            
         admin_id = doc.get("administradora_id")
         if admin_id:
             conta_result = (
-                supabase.table("plano_contas")
-                .select("codigo")
-                .eq("administradora_id", admin_id)
-                .eq("codigo", payload.conta_codigo)
+                supabase.table("plano_contas").select("id").eq("id", payload.conta_despesa_id).eq("administradora_id", admin_id)
                 .execute()
             )
             if not conta_result.data:
@@ -381,10 +403,10 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
             "competencia":     payload.competencia,
             "erro_msg":        None,
         }
-        if payload.conta_devedora_id:
-            update["conta_devedora_id"] = payload.conta_devedora_id
-        if payload.conta_codigo:
-            update["conta_codigo"] = payload.conta_codigo
+        if payload.conta_despesa_id:
+            update["conta_despesa_id"] = payload.conta_despesa_id
+        if payload.fonte_pagadora_id:
+            update["fonte_pagadora_id"] = payload.fonte_pagadora_id
         novo_status = "validado"
     else:
         update = {
@@ -394,36 +416,36 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
         novo_status = "erro"
 
     try:
-        supabase.table("documentos_fiscais").update(update).eq("id", documento_id).execute()
+        supabase.table("despesas").update(update).eq("id", documento_id).execute()
     except Exception as e:
         import traceback
         raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
 
-    if payload.acao == "confirmar" and payload.conta_codigo:
+    if payload.acao == "confirmar" and payload.conta_despesa_id:
         admin_id = doc.get("administradora_id")
         desc_doc = payload.descricao or ""
-        conta_codigo = payload.conta_codigo
+        conta_despesa_id = payload.conta_despesa_id
         
         if admin_id and desc_doc:
             # Dispara background task para o aprendizado contínuo
             background_tasks.add_task(
                 _aprender_com_validacao,
                 admin_id=admin_id,
-                conta_codigo=conta_codigo,
+                conta_despesa_id=conta_despesa_id,
                 contexto_documento=desc_doc
             )
 
     return ValidacaoResponse(ok=True, id=documento_id, status=novo_status)
 
 
-def _aprender_com_validacao(admin_id: int | str, conta_codigo: str, contexto_documento: str):
+def _aprender_com_validacao(admin_id: int | str, conta_despesa_id: str, contexto_documento: str):
     import logging
     from src.services.contexto_service import ContextoService
     logger = logging.getLogger("aprender_com_validacao")
     
     try:
         supabase = _get_supabase()
-        ContextoService.atualizar_contexto(supabase, str(admin_id), conta_codigo, contexto_documento)
+        ContextoService.atualizar_contexto(supabase, str(admin_id), conta_despesa_id, contexto_documento)
     except Exception as e:
         logger.error(f"Erro no aprendizado contnuo: {e}")
 
@@ -443,7 +465,7 @@ async def scan_qr_code(documento_id: str):
     supabase = _get_supabase()
 
     result = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("id, storage_path, bucket")
         .eq("id", documento_id)
         .single()
@@ -524,6 +546,10 @@ async def scan_qr_code(documento_id: str):
         import logging
         logging.getLogger("validacao_router").error(f"Erro ao escanear QR Code: {e}")
         return ScanQrResponse(sucesso=False, mensagem=f"Erro ao processar imagem: {e}")
+
+
+
+
 
 
 

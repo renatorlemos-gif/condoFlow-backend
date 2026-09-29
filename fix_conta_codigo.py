@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 from supabase import create_client
 
@@ -9,7 +9,7 @@ def run():
 
     print("Fixing conta_codigo based on sugestao_contabil...")
     try:
-        res = supabase.table("documentos_fiscais").select("id, sugestao_contabil, conta_codigo").execute()
+        res = supabase.table("despesas").select("id, sugestao_contabil, conta_codigo").execute()
         docs = res.data or []
         print(f"Found {len(docs)} documents.")
         updated_count = 0
@@ -24,7 +24,7 @@ def run():
             
             conta_deb = sugestao.get("conta_debito_codigo")
             if conta_deb:
-                supabase.table("documentos_fiscais").update({"conta_codigo": conta_deb}).eq("id", d["id"]).execute()
+                supabase.table("despesas").update({"conta_codigo": conta_deb}).eq("id", d["id"]).execute()
                 updated_count += 1
                 
         print(f"Successfully updated {updated_count} documents with real conta_codigo.")
@@ -33,3 +33,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+

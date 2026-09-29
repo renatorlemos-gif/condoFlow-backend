@@ -1,12 +1,12 @@
-"""
+﻿"""
 conciliacao_router.py
 =====================
-Endpoints para a tela de conciliação bancária.
+Endpoints para a tela de conciliaÃ§Ã£o bancÃ¡ria.
 
-GET  /api/v1/conciliacao/transacoes          — lista transações com sugestão de documento
-POST /api/v1/conciliacao/conciliar           — confirma pares transação ↔ documento (suporta N x N)
-DELETE /api/v1/conciliacao/{id}              — desfaz uma conciliação (estorna lotes inteiros se agrupada)
-GET  /api/v1/conciliacao/documentos-disponiveis — documentos validados ainda não conciliados
+GET  /api/v1/conciliacao/transacoes          â€” lista transaÃ§Ãµes com sugestÃ£o de documento
+POST /api/v1/conciliacao/conciliar           â€” confirma pares transaÃ§Ã£o â†” documento (suporta N x N)
+DELETE /api/v1/conciliacao/{id}              â€” desfaz uma conciliaÃ§Ã£o (estorna lotes inteiros se agrupada)
+GET  /api/v1/conciliacao/documentos-disponiveis â€” documentos validados ainda nÃ£o conciliados
 """
 
 import os
@@ -18,14 +18,14 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from supabase import create_client
 
-router = APIRouter(prefix="/api/v1/conciliacao", tags=["Conciliação"])
+router = APIRouter(prefix="/api/v1/conciliacao", tags=["ConciliaÃ§Ã£o"])
 
 
 def _get_supabase():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_KEY")
     if not url or not key:
-        raise RuntimeError("SUPABASE_URL ou SUPABASE_SERVICE_KEY não configuradas.")
+        raise RuntimeError("SUPABASE_URL ou SUPABASE_SERVICE_KEY nÃ£o configuradas.")
     return create_client(url, key)
 
 
@@ -42,6 +42,7 @@ class DocumentoSugestao(BaseModel):
     data_pagamento: str | None = None
     data_vencimento: str | None = None
     score: float
+    fonte_pagadora_id: str | None = None
 
 
 class DocumentoConciliadoInfo(BaseModel):
@@ -94,6 +95,7 @@ class TransacaoSugeridaInfo(BaseModel):
     tipo: str
     banco: str
     score: float
+    fonte_pagadora_id: str | None = None
 
 
 class SugestaoDocumentoResponse(BaseModel):
@@ -104,7 +106,7 @@ class SugestaoDocumentoResponse(BaseModel):
 
 
 # ------------------------------------------------------------------ #
-#  Lógica de sugestão automática                                      #
+#  LÃ³gica de sugestÃ£o automÃ¡tica                                      #
 # ------------------------------------------------------------------ #
 
 def _calcular_score(transacao: dict, documento: dict) -> float:
@@ -158,6 +160,7 @@ def _buscar_sugestao(transacao: dict, documentos: list[dict]) -> DocumentoSugest
             data_emissao=melhor.get("data_emissao"),
             valor_total=melhor.get("valor_total"),
             score=melhor_score,
+            fonte_pagadora_id=melhor_trans.get('fonte_pagadora_id'),
         )
     return None
 
@@ -196,7 +199,7 @@ async def listar_transacoes(
     if trans_ids:
         conc_result = (
             supabase.table("conciliacoes")
-            .select("*, documentos_fiscais(fornecedor, valor_total)")
+            .select("*, despesas(fornecedor, valor_total)")
             .in_("transacao_id", trans_ids)
             .execute()
         )
@@ -207,7 +210,7 @@ async def listar_transacoes(
             conciliacoes_por_trans[tid].append(c)
 
     docs_result = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("id, fornecedor, numero_doc, data_emissao, valor_total, data_pagamento, data_vencimento")
         .eq("status", "validado")
         .execute()
@@ -219,11 +222,11 @@ async def listar_transacoes(
     docs_ja_conciliados = {c.get("documento_id") for c in all_conc}
     docs_livres = [d for d in docs_disponiveis if d["id"] not in docs_ja_conciliados]
 
-    # Pre-calcula todas as sugestões possíveis para fazer um 'greedy match'
-    # Evita que o mesmo documento seja sugerido para duas transações
+    # Pre-calcula todas as sugestÃµes possÃ­veis para fazer um 'greedy match'
+    # Evita que o mesmo documento seja sugerido para duas transaÃ§Ãµes
     pares_possiveis = []
     for trans in transacoes:
-        # Pula as já conciliadas
+        # Pula as jÃ¡ conciliadas
         if trans["id"] in conciliacoes_por_trans:
             continue
         
@@ -261,7 +264,7 @@ async def listar_transacoes(
             lote_id = None
             is_lote = False
             for c in concs:
-                doc_data = c.get("documentos_fiscais") or {}
+                doc_data = c.get("despesas") or {}
                 docs_info.append(DocumentoConciliadoInfo(
                     id=c["documento_id"],
                     fornecedor=doc_data.get("fornecedor"),
@@ -310,7 +313,7 @@ async def documentos_disponiveis(q: str | None = None):
     ids_conciliados = {c["documento_id"] for c in (conc.data or [])}
 
     docs = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("id, fornecedor, numero_doc, data_emissao, valor_total, descricao")
         .eq("status", "validado")
         .order("data_emissao", desc=True)
@@ -336,9 +339,9 @@ async def conciliar(payload: ConciliarPayload):
     supabase = _get_supabase()
 
     if not payload.transacoes_ids or not payload.documentos_ids:
-        raise HTTPException(status_code=400, detail="É necessário ao menos uma transação e um documento.")
+        raise HTTPException(status_code=400, detail="Ã‰ necessÃ¡rio ao menos uma transaÃ§Ã£o e um documento.")
 
-    # Verifica se alguma transação já está conciliada
+    # Verifica se alguma transaÃ§Ã£o jÃ¡ estÃ¡ conciliada
     existentes = (
         supabase.table("conciliacoes")
         .select("id")
@@ -348,10 +351,10 @@ async def conciliar(payload: ConciliarPayload):
     if existentes.data:
         raise HTTPException(
             status_code=400,
-            detail="Uma ou mais transações selecionadas já estão conciliadas."
+            detail="Uma ou mais transaÃ§Ãµes selecionadas jÃ¡ estÃ£o conciliadas."
         )
 
-    # Verifica se algum documento já está conciliado
+    # Verifica se algum documento jÃ¡ estÃ¡ conciliado
     docs_existentes = (
         supabase.table("conciliacoes")
         .select("id")
@@ -361,26 +364,26 @@ async def conciliar(payload: ConciliarPayload):
     if docs_existentes.data:
         raise HTTPException(
             status_code=400,
-            detail="Um ou mais documentos selecionados já estão conciliados."
+            detail="Um ou mais documentos selecionados jÃ¡ estÃ£o conciliados."
         )
 
     # Busca valores para validar Delta Zero
-    trans_data = supabase.table("transacoes_extrato").select("valor, conta_bancaria_id").in_("id", payload.transacoes_ids).execute().data or []
-    docs_data = supabase.table("documentos_fiscais").select("valor_total").in_("id", payload.documentos_ids).execute().data or []
+    trans_data = supabase.table("transacoes_extrato").select("valor, fonte_pagadora_id").in_("id", payload.transacoes_ids).execute().data or []
+    docs_data = supabase.table("despesas").select("valor_total").in_("id", payload.documentos_ids).execute().data or []
 
     total_trans = sum(float(t.get("valor") or 0) for t in trans_data)
     total_docs = sum(float(d.get("valor_total") or 0) for d in docs_data)
 
     diferenca = abs(total_trans - total_docs)
     
-    # Tolerância de R$ 0,05 para divergências de centavos (RNF-03)
+    # TolerÃ¢ncia de R$ 0,05 para divergÃªncias de centavos (RNF-03)
     if diferenca > 0.05:
         raise HTTPException(
             status_code=400, 
-            detail=f"Diferença contábil de R$ {diferenca:.2f} excede a tolerância. A soma de transações deve ser igual aos documentos."
+            detail=f"DiferenÃ§a contÃ¡bil de R$ {diferenca:.2f} excede a tolerÃ¢ncia. A soma de transaÃ§Ãµes deve ser igual aos documentos."
         )
 
-    # Criação do Lote / Associação N x N
+    # CriaÃ§Ã£o do Lote / AssociaÃ§Ã£o N x N
     is_lote = len(payload.transacoes_ids) > 1 or len(payload.documentos_ids) > 1
     lote_id = f"lote_{uuid.uuid4().hex[:8]}"
     status_str = lote_id if is_lote else payload.status
@@ -398,24 +401,19 @@ async def conciliar(payload: ConciliarPayload):
 
     result = supabase.table("conciliacoes").insert(inserts).execute()
     if not result.data:
-        raise HTTPException(status_code=500, detail="Erro ao inserir conciliação.")
+        raise HTTPException(status_code=500, detail="Erro ao inserir conciliaÃ§Ã£o.")
 
     conciliacao_id_ref = result.data[0]["id"]
 
     # Atualiza documentos
-    plano_conta_id = None
-    if trans_data:
-        conta_bancaria_id = trans_data[0].get("conta_bancaria_id")
-        if conta_bancaria_id:
-            cb_data = supabase.table("contas_bancarias").select("plano_conta_id").eq("id", conta_bancaria_id).execute().data
-            if cb_data and cb_data[0].get("plano_conta_id"):
-                plano_conta_id = cb_data[0]["plano_conta_id"]
+    fonte_pagadora_id = trans_data[0].get("fonte_pagadora_id") if trans_data else None
 
-    update_doc = {"status": "conciliado"}
-    if plano_conta_id:
-        update_doc["conta_devedora_id"] = plano_conta_id
+    update_doc = {
+        "status": "conciliado",
+        "fonte_pagadora_id": fonte_pagadora_id
+    }
 
-    supabase.table("documentos_fiscais").update(update_doc).in_("id", payload.documentos_ids).execute()
+    supabase.table("despesas").update(update_doc).in_("id", payload.documentos_ids).execute()
 
     return ConciliarResponse(ok=True, conciliacao_id=lote_id if is_lote else conciliacao_id_ref)
 
@@ -424,39 +422,39 @@ async def conciliar(payload: ConciliarPayload):
 async def desfazer_conciliacao(conciliacao_id: str):
     supabase = _get_supabase()
 
-    # Verifica se está passando um ID de lote (prefixado com lote_)
+    # Verifica se estÃ¡ passando um ID de lote (prefixado com lote_)
     if conciliacao_id.startswith("lote_"):
         # Desfaz todo o lote
         conc_lote = supabase.table("conciliacoes").select("documento_id").eq("status", conciliacao_id).execute().data or []
         if not conc_lote:
-            raise HTTPException(status_code=404, detail="Lote de conciliação não encontrado.")
+            raise HTTPException(status_code=404, detail="Lote de conciliaÃ§Ã£o nÃ£o encontrado.")
             
         doc_ids = list({c["documento_id"] for c in conc_lote})
         
         supabase.table("conciliacoes").delete().eq("status", conciliacao_id).execute()
-        supabase.table("documentos_fiscais").update({"status": "validado"}).in_("id", doc_ids).execute()
+        supabase.table("despesas").update({"status": "validado"}).in_("id", doc_ids).execute()
         return {"ok": True, "lote_desfeito": True}
 
-    # Desfaz conciliação individual
+    # Desfaz conciliaÃ§Ã£o individual
     conc = supabase.table("conciliacoes").select("documento_id, status, transacao_id").eq("id", conciliacao_id).execute()
     if not conc.data:
-        raise HTTPException(status_code=404, detail="Conciliação não encontrada.")
+        raise HTTPException(status_code=404, detail="ConciliaÃ§Ã£o nÃ£o encontrada.")
 
     registro = conc.data[0]
     
-    # Se na verdade era parte de um lote via ID direto, vamos estornar o lote todo para evitar inconsistências
+    # Se na verdade era parte de um lote via ID direto, vamos estornar o lote todo para evitar inconsistÃªncias
     if str(registro.get("status", "")).startswith("lote_"):
         lote_str = registro["status"]
         conc_lote = supabase.table("conciliacoes").select("documento_id").eq("status", lote_str).execute().data or []
         doc_ids = list({c["documento_id"] for c in conc_lote})
         supabase.table("conciliacoes").delete().eq("status", lote_str).execute()
-        supabase.table("documentos_fiscais").update({"status": "validado"}).in_("id", doc_ids).execute()
-        return {"ok": True, "lote_desfeito": True, "obs": "A conciliação fazia parte de um lote, que foi totalmente desfeito."}
+        supabase.table("despesas").update({"status": "validado"}).in_("id", doc_ids).execute()
+        return {"ok": True, "lote_desfeito": True, "obs": "A conciliaÃ§Ã£o fazia parte de um lote, que foi totalmente desfeito."}
 
     # Estorno normal 1x1
     documento_id = registro["documento_id"]
     supabase.table("conciliacoes").delete().eq("id", conciliacao_id).execute()
-    supabase.table("documentos_fiscais").update({"status": "validado"}).eq("id", documento_id).execute()
+    supabase.table("despesas").update({"status": "validado"}).eq("id", documento_id).execute()
 
     return {"ok": True, "conciliacao_id": conciliacao_id}
 
@@ -470,18 +468,18 @@ async def sugestoes_documento(
     supabase = _get_supabase()
 
     # Buscar documento
-    doc_result = supabase.table("documentos_fiscais").select("*").eq("id", documento_id).execute()
+    doc_result = supabase.table("despesas").select("*").eq("id", documento_id).execute()
     if not doc_result.data:
-        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+        raise HTTPException(status_code=404, detail="Documento nÃ£o encontrado.")
     
     documento = doc_result.data[0]
     
     # Resolver condominio_id
     condo_id_query = condominio_id or documento.get("condominio_id")
     if not condo_id_query:
-        raise HTTPException(status_code=400, detail="condominio_id não fornecido e documento não possui condominio_id.")
+        raise HTTPException(status_code=400, detail="condominio_id nÃ£o fornecido e documento nÃ£o possui condominio_id.")
 
-    # Buscar transações no mes_ano para esse condomínio
+    # Buscar transaÃ§Ãµes no mes_ano para esse condomÃ­nio
     import calendar
     try:
         ano, mes = map(int, mes_ano.split("-"))
@@ -489,7 +487,7 @@ async def sugestoes_documento(
         _, ultimo_dia = calendar.monthrange(ano, mes)
         fim = f"{mes_ano}-{ultimo_dia:02d}"
     except ValueError:
-        raise HTTPException(status_code=400, detail="Formato mes_ano inválido. Use YYYY-MM")
+        raise HTTPException(status_code=400, detail="Formato mes_ano invÃ¡lido. Use YYYY-MM")
 
     trans_result = (
         supabase.table("transacoes_extrato")
@@ -504,7 +502,7 @@ async def sugestoes_documento(
     if not transacoes:
         return SugestaoDocumentoResponse(documento_id=documento_id, tem_sugestao=False)
 
-    # Excluir transações já conciliadas
+    # Excluir transaÃ§Ãµes jÃ¡ conciliadas
     trans_ids = [t["id"] for t in transacoes]
     conc_result = supabase.table("conciliacoes").select("transacao_id").in_("transacao_id", trans_ids).execute()
     ja_conciliadas = {c["transacao_id"] for c in (conc_result.data or [])}
@@ -541,9 +539,13 @@ async def sugestoes_documento(
             valor=melhor_trans.get("valor", 0.0),
             tipo=melhor_trans.get("tipo", ""),
             banco=melhor_trans.get("banco", ""),
-            score=melhor_score
+            score=melhor_score,
+            fonte_pagadora_id=melhor_trans.get('fonte_pagadora_id')
         ),
         total_candidatas=len(candidatas)
     )
+
+
+
 
 

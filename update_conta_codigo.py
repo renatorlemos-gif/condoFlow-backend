@@ -1,4 +1,4 @@
-import os
+﻿import os
 from supabase import create_client
 
 def run():
@@ -9,12 +9,12 @@ def run():
     print("Updating conta_codigo to 425 for existing documents...")
     try:
         # Fetch docs
-        res = supabase.table("documentos_fiscais").select("id").execute()
+        res = supabase.table("despesas").select("id").execute()
         docs = res.data or []
         print(f"Found {len(docs)} documents.")
         if docs:
             ids = [d["id"] for d in docs]
-            result = supabase.table("documentos_fiscais").update({"conta_codigo": "425"}).in_("id", ids).execute()
+            result = supabase.table("despesas").update({"conta_codigo": "425"}).in_("id", ids).execute()
             print(f"Successfully updated {len(result.data)} documents.")
     except Exception as e:
         print(f"Error: {e}")
@@ -22,3 +22,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+

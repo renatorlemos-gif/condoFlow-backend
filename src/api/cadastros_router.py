@@ -153,7 +153,7 @@ class ContaBancariaCreate(BaseModel):
     banco: str
     agencia: str
     conta: str
-    plano_conta_id: str
+    conta_despesa_id: str
     ativo: Optional[bool] = True
 
 class ContaBancariaOut(BaseModel):
@@ -162,7 +162,7 @@ class ContaBancariaOut(BaseModel):
     banco: str
     agencia: str
     conta: str
-    plano_conta_id: str
+    conta_despesa_id: str
     ativo: bool
 
 @router.get("/contas-bancarias", response_model=List[ContaBancariaOut])
@@ -191,5 +191,6 @@ async def excluir_conta_bancaria(id: str):
     if not res.data:
         raise HTTPException(status_code=404, detail="Conta bancaria nao encontrada")
     return {"message": "Conta bancaria desativada com sucesso"}
+
 
 

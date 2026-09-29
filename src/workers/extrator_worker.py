@@ -45,7 +45,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
 
     try:
         # Marca como "extraindo" para evitar reprocessamento paralelo
-        supabase.table("documentos_fiscais").update({
+        supabase.table("despesas").update({
             "status": "extraindo",
         }).eq("id", doc_id).execute()
 
@@ -87,7 +87,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
         os.unlink(tmp_path)
 
         # 2. RAG para classificação contábil
-        conta_codigo = None
+        codigo_contabil = None
         conta_nome = "Conta Classificada"
         desc_segura = getattr(dados, "descricao", None) or "serviços prestados"
         fornec_seguro = getattr(dados, "nome_fornecedor", None) or ""
@@ -137,7 +137,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
                 
                 if res_rag.data:
                     top_match = res_rag.data[0]
-                    conta_codigo = top_match.get('codigo')
+                    codigo_contabil = top_match.get('codigo_contabil')
                     conta_nome = top_match.get('descricao', 'N/A')
                     
                     sim = top_match.get('similarity')
@@ -151,15 +151,15 @@ async def _processar_documento(supabase, doc: dict) -> None:
                     origem_sugestao = "rag_sem_resultado"
         except Exception as e:
             logger.error(f"Erro no fluxo RAG: {e}\n{traceback.format_exc()}")
-            conta_codigo = None
+            codigo_contabil = None
             score = 0.0
             origem_sugestao = "rag_erro"
 
         sugestao_json = {
-            "conta_debito_codigo":  conta_codigo,
-            "conta_debito_nome":    conta_nome if conta_codigo else None,
-            "conta_credito_codigo": "1.1.01.02" if conta_codigo else None,
-            "conta_credito_nome":   "Banco Conta Movimento" if conta_codigo else None,
+            "conta_debito_codigo":  codigo_contabil,
+            "conta_debito_nome":    conta_nome if codigo_contabil else None,
+            "conta_credito_codigo": "1.1.01.02" if codigo_contabil else None,
+            "conta_credito_nome":   "Banco Conta Movimento" if codigo_contabil else None,
             "historico_sugerido":   historico_sugerido,
             "score_confianca":      score,
             "origem_sugestao":      origem_sugestao,
@@ -192,13 +192,13 @@ async def _processar_documento(supabase, doc: dict) -> None:
         if embedding_val:
             update_data["embedding"] = list(embedding_val)
 
-        supabase.table("documentos_fiscais").update(update_data).eq("id", doc_id).execute()
+        supabase.table("despesas").update(update_data).eq("id", doc_id).execute()
 
         logger.info(f"[worker] documento {doc_id} extraído com sucesso")
 
     except Exception as e:
         logger.error(f"[worker] erro ao processar {doc_id}: {e}")
-        supabase.table("documentos_fiscais").update({
+        supabase.table("despesas").update({
             "status":   "erro",
             "erro_msg": str(e),
         }).eq("id", doc_id).execute()
@@ -215,7 +215,7 @@ async def rodar_worker() -> None:
 
             # Busca documentos pendentes (máx 5 por ciclo para não sobrecarregar)
             result = (
-                supabase.table("documentos_fiscais")
+                supabase.table("despesas")
                 .select("id, bucket, storage_path, filename, condominio_id, administradora_id")
                 .in_("status", ["pendente", "extraindo"])
                 .order("criado_em")

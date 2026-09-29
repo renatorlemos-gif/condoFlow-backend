@@ -1,4 +1,4 @@
-import os
+﻿import os
 from supabase import create_client
 
 def migrate():
@@ -12,14 +12,15 @@ def migrate():
     
     # We can fetch all and update or just try to update all directly.
     # Supabase might not allow update without .eq(), but .neq("id", "0") works
-    res = supabase.table("documentos_fiscais").select("id").execute()
+    res = supabase.table("despesas").select("id").execute()
     docs = res.data or []
     print(f"Found {len(docs)} documents.")
     
     if docs:
         ids = [d["id"] for d in docs]
-        result = supabase.table("documentos_fiscais").update({"condominio_id": target_id}).in_("id", ids).execute()
+        result = supabase.table("despesas").update({"condominio_id": target_id}).in_("id", ids).execute()
         print(f"Successfully updated {len(result.data)} documents.")
 
 if __name__ == "__main__":
     migrate()
+

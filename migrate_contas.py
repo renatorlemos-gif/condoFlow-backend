@@ -1,4 +1,4 @@
-import os
+﻿import os
 from supabase import create_client
 
 def migrate():
@@ -8,7 +8,7 @@ def migrate():
 
     print("Fetching conciliado documents without conta_devedora_id...")
     res = (
-        supabase.table("documentos_fiscais")
+        supabase.table("despesas")
         .select("id, conciliacoes(transacoes_extrato(contas_bancarias(plano_conta_id)))")
         .eq("status", "conciliado")
         .is_("conta_devedora_id", "null")
@@ -29,10 +29,11 @@ def migrate():
                     plano_conta_id = cb.get("plano_conta_id")
                     if plano_conta_id:
                         print(f"Updating doc {doc_id} with plano_conta_id {plano_conta_id}")
-                        supabase.table("documentos_fiscais").update({"conta_devedora_id": plano_conta_id}).eq("id", doc_id).execute()
+                        supabase.table("despesas").update({"conta_devedora_id": plano_conta_id}).eq("id", doc_id).execute()
                         updated_count += 1
 
     print(f"Migration completed. {updated_count} documents updated.")
 
 if __name__ == "__main__":
     migrate()
+

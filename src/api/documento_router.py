@@ -55,7 +55,7 @@ async def upload_documento_fiscal(
     """
     Recebe uma foto ou PDF de documento fiscal:
     1. Salva no Supabase Storage (bucket integre / documentos/)
-    2. Insere registro em documentos_fiscais com status = "pendente"
+    2. Insere registro em despesas com status = "pendente"
     3. Retorna imediatamente — o worker processa a extração em background
     """
     files_data = []
@@ -97,7 +97,7 @@ async def upload_documento_fiscal(
     # 2. Insere registro no banco com status "pendente"
     try:
         supabase = _get_supabase()
-        insert = supabase.table("documentos_fiscais").insert({
+        insert = supabase.table("despesas").insert({
             "administradora_id": administradora_id,
             "condominio_id": condominio_id,
             "bucket":       resultado["bucket"],
@@ -163,7 +163,7 @@ async def reprocessar_documento(doc_id: str):
     """Reprocessa um documento enviando-o de volta para a fila de extração OCR."""
     try:
         supabase = _get_supabase()
-        supabase.table("documentos_fiscais").update({
+        supabase.table("despesas").update({
             "status": "pendente",
             "erro_msg": None
         }).eq("id", doc_id).execute()

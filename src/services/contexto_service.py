@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import logging
 import math
@@ -22,19 +22,19 @@ class ContextoService:
         return dot / (norm1 * norm2)
 
     @staticmethod
-    def atualizar_contexto(supabase, admin_id: str, conta_codigo: str, novo_descritivo: str):
+    def atualizar_contexto(supabase, admin_id: str, conta_despesa_id: str, novo_descritivo: str):
         try:
             # 1. Puxa os dados da conta atual
             res = (
                 supabase.table("plano_contas")
                 .select("descricao, contexto, embedding")
                 .eq("administradora_id", str(admin_id))
-                .eq("codigo", conta_codigo)
+                .eq("id", conta_despesa_id)
                 .execute()
             )
             
             if not res.data:
-                logger.warning(f"[ContextoService] Conta {conta_codigo} no encontrada para a administradora {admin_id}.")
+                logger.warning(f"[ContextoService] Conta {conta_despesa_id} no encontrada para a administradora {admin_id}.")
                 return
 
             conta_data = res.data[0]
@@ -61,10 +61,10 @@ class ContextoService:
                 
                 sim = ContextoService._cosine_similarity(novo_descritivo_embedding, embedding_atual)
                 if sim > 0.85:
-                    logger.info(f"[ContextoService] Atualizao ignorada: Similaridade de cosseno {sim:.4f} > 0.85 (A IA j conhece este padro para a conta {conta_codigo}).")
+                    logger.info(f"[ContextoService] Atualizao ignorada: Similaridade de cosseno {sim:.4f} > 0.85 (A IA j conhece este padro para a conta {conta_despesa_id}).")
                     return
                 else:
-                    logger.info(f"[ContextoService] Contexto precisa ser atualizado para a conta {conta_codigo}: similaridade={sim:.4f} <= 0.85.")
+                    logger.info(f"[ContextoService] Contexto precisa ser atualizado para a conta {conta_despesa_id}: similaridade={sim:.4f} <= 0.85.")
             
             # Se nao existir ou se for <= 0.85
             if contexto_atual:
@@ -104,8 +104,9 @@ class ContextoService:
                 "embedding": list(novo_embedding),
                 "criada_por_ia": True,
                 "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("administradora_id", str(admin_id)).eq("codigo", conta_codigo).execute()
+            }).eq("administradora_id", str(admin_id)).eq("id", conta_despesa_id).execute()
 
-            logger.info(f"[ContextoService] Contexto atualizado com sucesso para a conta {conta_codigo}.")
+            logger.info(f"[ContextoService] Contexto atualizado com sucesso para a conta {conta_despesa_id}.")
         except Exception as e:
-            logger.error(f"[ContextoService] Erro ao atualizar contexto da conta {conta_codigo}: {e}")
+            logger.error(f"[ContextoService] Erro ao atualizar contexto da conta {conta_despesa_id}: {e}")
+

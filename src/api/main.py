@@ -15,6 +15,7 @@ from src.api.balancete_router import router as balancete_router
 from src.api.classificacao_router import router as classificacao_router
 from src.api.exportacao_router import router as exportacao_router
 from src.api.cadastros_router import router as cadastros_router
+from src.api.fontes_pagadoras_router import router as fontes_pagadoras_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -61,6 +62,7 @@ app.include_router(balancete_router)
 app.include_router(classificacao_router)
 app.include_router(exportacao_router)
 app.include_router(cadastros_router)
+app.include_router(fontes_pagadoras_router)
 
 
 # ------------------------------------------------------------------ #
@@ -83,7 +85,7 @@ async def processar_extrato(
     banco: str = Form(...),
     administradora_id: str = Form("adm-alpha"),
     condominio_id: str = Form("condo-alpha-01"),
-    conta_bancaria_id: str = Form(None),
+    fonte_pagadora_id: str = Form(None),
 ):
     conteudo_bytes = await file.read()
     nome_original  = file.filename or "extrato.xlsx"
@@ -96,7 +98,7 @@ async def processar_extrato(
             banco=banco,
             administradora_id=administradora_id,
             condominio_id=condominio_id,
-            conta_bancaria_id=conta_bancaria_id,
+            fonte_pagadora_id=fonte_pagadora_id,
         )
         logger.info(f"Extrato processado: {qtd_transacoes} transações salvas no banco (Condomínio: {condominio_id}).")
     except ValueError as ve:

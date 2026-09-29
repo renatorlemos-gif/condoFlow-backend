@@ -34,7 +34,7 @@ def _salvar_transacoes(
     storage_path: str,
     administradora_id: str = "adm-alpha",
     condominio_id: str = "condo-alpha-01",
-    conta_bancaria_id: str = None,
+    fonte_pagadora_id: str = None,
 ) -> int:
     """
     Persiste as transações do DataFrame em transacoes_extrato com contexto de administradora e condomínio.
@@ -67,8 +67,8 @@ def _salvar_transacoes(
                 "metadados":         metadados,
                 "criado_em":         datetime.now(timezone.utc).isoformat(),
             }
-            if conta_bancaria_id:
-                reg["conta_bancaria_id"] = conta_bancaria_id
+            if fonte_pagadora_id:
+                reg["fonte_pagadora_id"] = fonte_pagadora_id
             registros.append(reg)
 
         if debito > 0:
@@ -84,8 +84,8 @@ def _salvar_transacoes(
                 "metadados":         metadados,
                 "criado_em":         datetime.now(timezone.utc).isoformat(),
             }
-            if conta_bancaria_id:
-                reg["conta_bancaria_id"] = conta_bancaria_id
+            if fonte_pagadora_id:
+                reg["fonte_pagadora_id"] = fonte_pagadora_id
             registros.append(reg)
 
     if registros:
@@ -111,16 +111,16 @@ async def processar_e_persistir(
     banco: str,
     administradora_id: str = "adm-alpha",
     condominio_id: str = "condo-alpha-01",
-    conta_bancaria_id: str = None,
+    fonte_pagadora_id: str = None,
 ) -> tuple[io.BytesIO, str, int]:
     """
     Ponto de entrada principal. Retorna (excel_io, nome_saida, qtd_transacoes).
     """
     # Se recebemos ID, mas o banco venha em branco ou divergente, 
     # podemos pegar o banco real da tabela
-    if conta_bancaria_id:
+    if fonte_pagadora_id:
         supabase = _get_supabase()
-        res = supabase.table("contas_bancarias").select("banco").eq("id", conta_bancaria_id).execute()
+        res = supabase.table("fontes_pagadoras").select("banco").eq("id", fonte_pagadora_id).execute()
         if res.data:
             banco = res.data[0].get("banco", banco)
 
@@ -156,7 +156,7 @@ async def processar_e_persistir(
             storage_path=storage_path,
             administradora_id=administradora_id,
             condominio_id=condominio_id,
-            conta_bancaria_id=conta_bancaria_id,
+            fonte_pagadora_id=fonte_pagadora_id,
         )
 
     return excel_io, nome_saida, qtd

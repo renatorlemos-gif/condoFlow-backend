@@ -15,7 +15,7 @@ def _get_supabase():
 
 class ConfirmarClassificacaoRequest(BaseModel):
     administradora_id: str
-    conta_codigo: str
+    codigo_contabil: str
     criada_por_ia: bool = False
 
 @router.post("/confirmar")

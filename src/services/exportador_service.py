@@ -14,7 +14,7 @@ class ExportadorService:
             self.db.table("transacoes_extrato")
             .select(
                 "id, data_transacao, valor, descricao, banco, "
-                "conciliacoes!inner(id, documento_id, documentos_fiscais(fornecedor, numero_doc, descricao, sugestao_contabil, valor_total))"
+                "conciliacoes!inner(id, documento_id, despesas(id, data_pagamento, data_emissao, fornecedor, numero_doc, descricao, sugestao_contabil, valor_total, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))))"
             )
             .eq("condominio_id", condominio_id)
             .execute()
@@ -26,12 +26,16 @@ class ExportadorService:
              raise HTTPException(status_code=400, detail="Nenhum lançamento conciliado encontrado para exportação.")
 
         pendencias = []
+        documentos = []
         
         # Validar pendências ("A Classificar" ou null)
         for t in transacoes:
             concs = t.get("conciliacoes") or []
             for c in concs:
-                doc = c.get("documentos_fiscais") or {}
+                doc = c.get("despesas") or {}
+                if doc:
+                    documentos.append(doc)
+
                 sugestao = doc.get("sugestao_contabil")
                 
                 if not sugestao:
@@ -59,11 +63,23 @@ class ExportadorService:
                 yyyy, mm, dd = raw_date.split("-")
                 data_fmt = f"{dd}/{mm}/{yyyy}"
 
-            conta_deb = doc.get("conta_codigo") or ""
+            # Conta Crédito (Banco/Fonte Pagadora - Diminui Ativo)
+            fp_data = doc.get("fontes_pagadoras") or {}
+            pc_data = fp_data.get("plano_contas") or {}
+            if isinstance(pc_data, dict):
+                conta_cred = pc_data.get("codigo_contabil") or ""
+            else:
+                conta_cred = ""
             
-            # C. Devedora (Banco)
+            # Conta Débito (Despesa - Aumenta Despesa)
             plano = doc.get("plano_contas") or {}
-            conta_cred = plano.get("codigo") or ""
+            conta_deb = plano.get("codigo_contabil") or ""
+
+            if not conta_deb or not conta_cred:
+                import logging
+                logger = logging.getLogger("exportador")
+                logger.warning(f"Documento {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
+                continue
             
             val = float(doc.get("valor_total") or 0)
             val_cents = str(int(round(val * 100)))
@@ -73,11 +89,12 @@ class ExportadorService:
             numero_doc = str(doc.get("numero_doc") or "S/N")
             
             historico = descricao or f"PG {fornecedor}"
+            historico = historico.replace(",", " ")  # Evitar quebra do CSV do Alterdata
             
-            # Formatao com tamanho fixo e vrgulas
+            # Formatação com tamanho fixo e vírgulas
             part_0 = "  "
-            part_1 = f"{conta_deb:<3}"[:3]
-            part_2 = f"{conta_cred:<3}"[:3]
+            part_1 = f"{conta_cred:<3}"[:3]
+            part_2 = f"{conta_deb:<3}"[:3]
             part_3 = f"{data_fmt:<10}"[:10]
             
             # DT_COTA (MM/YYYY)
@@ -105,21 +122,21 @@ class ExportadorService:
 
         # 1. Documentos validados
         res_val = (
-            self.db.table("documentos_fiscais")
-            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_devedora_id, plano_contas(codigo)")
+            self.db.table("despesas")
+            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
             .eq("condominio_id", condominio_id)
             .eq("status", "validado")
-            .not_.is_("conta_devedora_id", "null")
+            .not_.is_("conta_despesa_id", "null")
             .execute()
         )
         
         # 2. Documentos conciliados
         res_conc = (
-            self.db.table("documentos_fiscais")
-            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_devedora_id, plano_contas(codigo)")
+            self.db.table("despesas")
+            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
             .eq("condominio_id", condominio_id)
             .eq("status", "conciliado")
-            .not_.is_("conta_devedora_id", "null")
+            .not_.is_("conta_despesa_id", "null")
             .execute()
         )
 
@@ -136,27 +153,13 @@ class ExportadorService:
                 docs_conc.append(d)
 
         documentos = []
-        for d in docs_val:
-            sugestao = d.get("sugestao_contabil") or {}
-            conta_deb = sugestao.get("conta_debito_codigo", "")
-            conta_cred = d.get("plano_contas", {}).get("codigo", "") if d.get("plano_contas") else ""
+        for d in docs_val + docs_conc:
+            conta_despesa = d.get("plano_contas") or {}
+            conta_deb = conta_despesa.get("codigo_contabil") or ""
             
-            documentos.append({
-                "id": d["id"],
-                "fornecedor": d.get("fornecedor"),
-                "numero_doc": d.get("numero_doc"),
-                "data_pagamento": d.get("data_pagamento"),
-                "data_emissao": d.get("data_emissao"),
-                "valor_total": d.get("valor_total"),
-                "descricao": d.get("descricao"),
-                "conta_deb": conta_deb,
-                "conta_cred": conta_cred
-            })
-
-        for d in docs_conc:
-            sugestao = d.get("sugestao_contabil") or {}
-            conta_deb = sugestao.get("conta_debito_codigo", "")
-            conta_cred = d.get("plano_contas", {}).get("codigo", "") if d.get("plano_contas") else ""
+            fp = d.get("fontes_pagadoras") or {}
+            fp_pc = fp.get("plano_contas") or {}
+            conta_cred = fp_pc.get("codigo_contabil") or ""
                             
             documentos.append({
                 "id": d["id"],
@@ -178,21 +181,27 @@ class ExportadorService:
         if not documentos:
             raise HTTPException(status_code=400, detail="Nuo ho lanamentos qualificados para exportauo neste perodo.")
 
+        import logging
+        logger = logging.getLogger("exportador")
         output = io.StringIO()
-        
+
         for doc in documentos:
+            # C. Credora (Banco/Fonte - diminui o ativo)
+            conta_cred = doc.get("conta_cred") or ""
+            
+            # C. Devedora (Despesa - aumenta a despesa)
+            conta_deb = doc.get("conta_deb") or ""
+
+            if not conta_cred or not conta_deb:
+                logger.warning(f"Documento {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
+                continue
+
             raw_date = doc.get("data_pagamento") or doc.get("data_emissao") or ""
             data_fmt = ""
             if raw_date:
                 raw_date = raw_date[:10]
                 yyyy, mm, dd = raw_date.split("-")
                 data_fmt = f"{dd}/{mm}/{yyyy}"
-
-            # C. Credora (Despesa) - em preview us42 vem como conta_deb
-            conta_cred = doc.get("conta_deb", "")
-            
-            # C. Devedora (Banco) - em preview us42 vem como conta_cred
-            conta_deb = doc.get("conta_cred", "")
             
             val = float(doc.get("valor_total") or 0)
             val_cents = str(int(round(val * 100)))
@@ -224,3 +233,5 @@ class ExportadorService:
             output.write(linha)
             
         return output.getvalue().encode("cp1252", errors="replace")
+
+

@@ -8,7 +8,7 @@ async def extract_balancete_data(pdf_bytes: bytes) -> list:
     """
     Extrai texto do PDF localmente com PyMuPDF e extrai dados usando Expressões Regulares,
     eliminando a dependência do Gemini para otimizar tokens e performance.
-    Retorna lista de dicts com (descricao_lancamento, conta_codigo, conta_descricao).
+    Retorna lista de dicts com (descricao_lancamento, codigo_contabil, conta_descricao).
     """
     logger.info(f"Tamanho do PDF: {len(pdf_bytes)} bytes")
     if not pdf_bytes:
@@ -41,7 +41,7 @@ async def extract_balancete_data(pdf_bytes: bytes) -> list:
     for match in padrao.finditer(texto_pdf_flat):
         resultados.append({
             "descricao_lancamento": match.group(5).strip(),
-            "conta_codigo": match.group(4),
+            "codigo_contabil": match.group(4),
             "conta_descricao": match.group(2).strip()
         })
 

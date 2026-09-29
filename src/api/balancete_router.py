@@ -35,7 +35,7 @@ async def upload_balancete(
                 "condominio_id": condominio_id,
                 "administradora_id": administradora_id,
                 "descricao_lancamento": str(item.get("descricao_lancamento", "Desconhecido"))[:255],
-                "conta_codigo": str(item.get("conta_codigo", ""))[:50] if item.get("conta_codigo") else None,
+                "codigo_contabil": str(item.get("codigo_contabil", ""))[:50] if item.get("codigo_contabil") else None,
                 "conta_descricao": str(item.get("conta_descricao", ""))[:255] if item.get("conta_descricao") else None
             })
             
@@ -77,19 +77,19 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
         import logging
         logger = logging.getLogger(__name__)
         
-        query = supabase.table("balancetes_historicos").select("id, administradora_id, descricao_lancamento, conta_codigo, conta_descricao").or_("processado_ia.is.null,processado_ia.eq.false")
+        query = supabase.table("balancetes_historicos").select("id, administradora_id, descricao_lancamento, codigo_contabil, conta_descricao").or_("processado_ia.is.null,processado_ia.eq.false")
         if request and request.administradora_id:
             query = query.eq("administradora_id", request.administradora_id)
             
         res = query.execute()
         data = res.data or []
         
-        # Cenário 02: Agrupar por administradora_id e conta_codigo
+        # Cenário 02: Agrupar por administradora_id e codigo_contabil
         grupos = {}
         for item in data:
             item_id = item.get("id")
             admin_id = item.get("administradora_id")
-            conta = item.get("conta_codigo")
+            conta = item.get("codigo_contabil")
             desc = item.get("descricao_lancamento")
             conta_descricao = item.get("conta_descricao")
             
