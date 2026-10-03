@@ -1,11 +1,11 @@
 """
 validacao_router.py
 ===================
-Endpoints para a tela de validação de documentos fiscais.
+Endpoints para a tela de validação de despesas fiscais.
 
-GET  /api/v1/validacao/documentos          — lista documentos extraídos
-GET  /api/v1/validacao/documentos/{id}     — detalhe + URL assinada da foto
-PATCH /api/v1/validacao/documentos/{id}    — salva correções + confirma/rejeita
+GET  /api/v1/validacao/despesas          — lista despesas extraídos
+GET  /api/v1/validacao/despesas/{id}     — detalhe + URL assinada da foto
+PATCH /api/v1/validacao/despesas/{id}    — salva correções + confirma/rejeita
 """
 
 import os
@@ -31,7 +31,7 @@ def _get_supabase():
 #  Schemas                                                            #
 # ------------------------------------------------------------------ #
 
-class DocumentoResumo(BaseModel):
+class DespesaResumo(BaseModel):
     id: str
     filename: str
     status: str
@@ -47,7 +47,7 @@ class DocumentoResumo(BaseModel):
     fonte_pagadora_id: str | None = None
     conta_credora_descricao: str | None = None
 
-class DocumentoDetalhe(BaseModel):
+class DespesaDetalhe(BaseModel):
     id: str
     filename: str
     status: str
@@ -97,13 +97,13 @@ class ValidacaoResponse(BaseModel):
 #  Endpoints                                                          #
 # ------------------------------------------------------------------ #
 
-@router.get("/documentos", response_model=list[dict])
-async def listar_documentos(
+@router.get("/despesas", response_model=list[dict])
+async def listar_despesas(
     status: str = "extraido",   # filtro padrão: só os prontos pra validar
     limit: int = 500,
 ):
     """
-    Lista documentos fiscais filtrados por status.
+    Lista despesas fiscais filtrados por status.
     Padrão: status=extraido (prontos para validação).
     Passar status=todos retorna todos os registros.
     """
@@ -164,10 +164,10 @@ async def listar_documentos(
     return docs
 
 
-@router.get("/documentos/{documento_id}", response_model=DocumentoDetalhe)
-async def detalhe_documento(documento_id: str):
+@router.get("/despesas/{despesa_id}", response_model=DespesaDetalhe)
+async def detalhe_despesa(despesa_id: str):
     """
-    Retorna todos os dados de um documento + URL assinada (1h) para
+    Retorna todos os dados de um despesa + URL assinada (1h) para
     exibir a foto diretamente no browser sem expor o bucket publicamente.
     """
     supabase = _get_supabase()
@@ -175,13 +175,13 @@ async def detalhe_documento(documento_id: str):
     result = (
         supabase.table("despesas")
         .select("*")
-        .eq("id", documento_id)
+        .eq("id", despesa_id)
         .single()
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+        raise HTTPException(status_code=404, detail="Despesa não encontrado.")
 
     doc = result.data
 
@@ -196,7 +196,7 @@ async def detalhe_documento(documento_id: str):
     except Exception:
         pass  # foto não disponível, mas não quebra o fluxo
 
-    return DocumentoDetalhe(
+    return DespesaDetalhe(
         id=doc["id"],
         filename=doc["filename"],
         status=doc["status"],
@@ -228,25 +228,24 @@ class ContaOpcao(BaseModel):
     similarity: float | None = None
 
 
-@router.get("/documentos/{documento_id}/contas-sugeridas", response_model=list[ContaOpcao])
-async def obter_contas_sugeridas(documento_id: str):
+@router.get("/despesas/{despesa_id}/contas-sugeridas", response_model=list[ContaOpcao])
+async def obter_contas_sugeridas(despesa_id: str):
     """
     Retorna o plano de contas da administradora ordenado por similaridade
-    com o embedding do documento atual.
-    Faz o cálculo vetorial diretamente no Python para evitar erros de tipo (uuid vs varchar) do Supabase RPC.
+    com o embedding da despesa atual via RPC.
     """
     supabase = _get_supabase()
 
     result = (
         supabase.table("despesas")
         .select("administradora_id, embedding")
-        .eq("id", documento_id)
+        .eq("id", despesa_id)
         .single()
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+        raise HTTPException(status_code=404, detail="Despesa não encontrada.")
 
     doc = result.data
     admin_id = doc.get("administradora_id")
@@ -255,100 +254,96 @@ async def obter_contas_sugeridas(documento_id: str):
     if not admin_id:
         return []
 
-    # Busca o plano de contas da administradora com seus embeddings
+    top_5 = []
+    top_5_ids = set()
+
+    if embedding:
+        import json
+        try:
+            q_emb = embedding if isinstance(embedding, list) else json.loads(embedding)
+            res_rpc = supabase.rpc("match_plano_contas", {
+                "query_embedding": q_emb,
+                "match_threshold": -1.0,
+                "match_count": 5,
+                "p_administradora_id": str(admin_id)
+            }).execute()
+            
+            if res_rpc.data:
+                for row in res_rpc.data:
+                    top_5.append(ContaOpcao(
+                        id=row["id"],
+                        codigo_contabil=row["codigo_contabil"],
+                        descricao=row["descricao"],
+                        similarity=row.get("similarity")
+                    ))
+                    top_5_ids.add(row["id"])
+        except Exception as e:
+            import logging
+            logger = logging.getLogger("validacao_router")
+            logger.error(f"Erro ao chamar match_plano_contas RPC: {e}")
+
+    # Busca as outras contas
     res_contas = (
         supabase.table("plano_contas")
-        .select("id, codigo_contabil, descricao, embedding")
+        .select("id, codigo_contabil, descricao")
         .eq("administradora_id", str(admin_id))
         .execute()
     )
-    
-    contas = []
+
+    outras_contas = []
     if res_contas.data:
-        import json
-        import math
-        
-        # Helper para similaridade do cosseno
-        def cosine_similarity(v1, v2):
-            if not v1 or not v2: return 0.0
-            dot = sum(a * b for a, b in zip(v1, v2))
-            norm1 = math.sqrt(sum(a * a for a in v1))
-            norm2 = math.sqrt(sum(b * b for b in v2))
-            if norm1 == 0 or norm2 == 0: return 0.0
-            return dot / (norm1 * norm2)
-            
-        q_emb = None
-        if embedding:
-            try:
-                q_emb = embedding if isinstance(embedding, list) else json.loads(embedding)
-            except Exception as e:
-                import logging
-                logger = logging.getLogger("validacao_router")
-                logger.error(f"Erro ao parsear embedding do documento: {e}")
-                
         for c in res_contas.data:
-            sim = None
-            if q_emb and c.get("embedding"):
-                try:
-                    c_emb = c["embedding"] if isinstance(c["embedding"], list) else json.loads(c["embedding"])
-                    sim = cosine_similarity(q_emb, c_emb)
-                except Exception:
-                    pass
-            contas.append({
-                "id": c["id"],
-                "codigo_contabil": c["codigo_contabil"],
-                "descricao": c["descricao"],
-                "similarity": sim
-            })
-            
-        if q_emb:
-            # Ordena por similaridade (maior para menor). Contas sem similarity vão pro final.
-            contas.sort(key=lambda x: (x["similarity"] is not None, x["similarity"] or 0.0), reverse=True)
-        else:
-            contas.sort(key=lambda x: x["codigo_contabil"])
-            
-        return [
-            ContaOpcao(
+            if c["id"] not in top_5_ids:
+                outras_contas.append({
+                    "id": c["id"],
+                    "codigo_contabil": c["codigo_contabil"],
+                    "descricao": c["descricao"]
+                })
+        
+        # Order alphabetically
+        outras_contas.sort(key=lambda x: x["codigo_contabil"] or "")
+
+        for c in outras_contas:
+            top_5.append(ContaOpcao(
                 id=c["id"],
                 codigo_contabil=c["codigo_contabil"],
                 descricao=c["descricao"],
-                similarity=c["similarity"]
-            )
-            for c in contas
-        ]
-    return []
+                similarity=None
+            ))
+
+    return top_5
 
 
-@router.patch("/documentos/{documento_id}", response_model=ValidacaoResponse)
-async def validar_documento(documento_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
+@router.patch("/despesas/{despesa_id}", response_model=ValidacaoResponse)
+async def validar_despesa(despesa_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
     import traceback
     try:
-        return await _validar_documento_impl(documento_id, payload, background_tasks)
+        return await _validar_despesa_impl(despesa_id, payload, background_tasks)
     except Exception as e:
         with open('FATAL_ERR.txt', 'w') as f:
             f.write(traceback.format_exc())
         raise
 
-async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
+async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, background_tasks: BackgroundTasks):
     supabase = _get_supabase()
 
-    # Verifica que o documento existe e está no estado certo
+    # Verifica que o despesa existe e está no estado certo
     result = (
         supabase.table("despesas")
         .select("id, status, condominio_id, administradora_id")
-        .eq("id", documento_id)
+        .eq("id", despesa_id)
         .single()
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+        raise HTTPException(status_code=404, detail="Despesa não encontrado.")
 
     doc = result.data
     if doc["status"] not in ("extraido", "erro", "validado"):
         raise HTTPException(
             status_code=400,
-            detail=f"Documento com status '{doc['status']}' não pode ser validado.",
+            detail=f"Despesa com status '{doc['status']}' não pode ser validado.",
         )
 
     if payload.acao == "cancelar":
@@ -358,11 +353,11 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
             "conta_despesa_id": None
         }
         try:
-            supabase.table("despesas").update(update).eq("id", documento_id).execute()
+            supabase.table("despesas").update(update).eq("id", despesa_id).execute()
         except Exception as e:
             import traceback
             raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
-        return ValidacaoResponse(ok=True, id=documento_id, status="extraido")
+        return ValidacaoResponse(ok=True, id=despesa_id, status="extraido")
 
     if payload.acao == "confirmar":
         if not payload.conta_despesa_id or not payload.conta_despesa_id.strip():
@@ -416,7 +411,7 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
         novo_status = "erro"
 
     try:
-        supabase.table("despesas").update(update).eq("id", documento_id).execute()
+        supabase.table("despesas").update(update).eq("id", despesa_id).execute()
     except Exception as e:
         import traceback
         raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
@@ -432,20 +427,20 @@ async def _validar_documento_impl(documento_id: str, payload: ValidacaoPayload, 
                 _aprender_com_validacao,
                 admin_id=admin_id,
                 conta_despesa_id=conta_despesa_id,
-                contexto_documento=desc_doc
+                contexto_despesa=desc_doc
             )
 
-    return ValidacaoResponse(ok=True, id=documento_id, status=novo_status)
+    return ValidacaoResponse(ok=True, id=despesa_id, status=novo_status)
 
 
-def _aprender_com_validacao(admin_id: int | str, conta_despesa_id: str, contexto_documento: str):
+def _aprender_com_validacao(admin_id: int | str, conta_despesa_id: str, contexto_despesa: str):
     import logging
     from src.services.contexto_service import ContextoService
     logger = logging.getLogger("aprender_com_validacao")
     
     try:
         supabase = _get_supabase()
-        ContextoService.atualizar_contexto(supabase, str(admin_id), conta_despesa_id, contexto_documento)
+        ContextoService.atualizar_contexto(supabase, str(admin_id), conta_despesa_id, contexto_despesa)
     except Exception as e:
         logger.error(f"Erro no aprendizado contnuo: {e}")
 
@@ -456,8 +451,8 @@ class ScanQrResponse(BaseModel):
     mensagem: str | None = None
 
 
-@router.post("/documentos/{documento_id}/scan-qr", response_model=ScanQrResponse)
-async def scan_qr_code(documento_id: str):
+@router.post("/despesas/{despesa_id}/scan-qr", response_model=ScanQrResponse)
+async def scan_qr_code(despesa_id: str):
     """
     Baixa o arquivo do Supabase, procura por QR Codes e retorna a URL se achar.
     """
@@ -467,13 +462,13 @@ async def scan_qr_code(documento_id: str):
     result = (
         supabase.table("despesas")
         .select("id, storage_path, bucket")
-        .eq("id", documento_id)
+        .eq("id", despesa_id)
         .single()
         .execute()
     )
 
     if not result.data:
-        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+        raise HTTPException(status_code=404, detail="Despesa não encontrado.")
 
     doc = result.data
     storage_path = doc["storage_path"]
@@ -538,7 +533,7 @@ async def scan_qr_code(documento_id: str):
         if urls_encontradas:
             return ScanQrResponse(sucesso=True, url=urls_encontradas[0])
         else:
-            return ScanQrResponse(sucesso=False, mensagem="Nenhum QR Code legível encontrado no documento.")
+            return ScanQrResponse(sucesso=False, mensagem="Nenhum QR Code legível encontrado no despesa.")
             
     except ImportError:
         return ScanQrResponse(sucesso=False, mensagem="Bibliotecas de processamento (pyzbar/pymupdf) não estão instaladas no servidor.")

@@ -4,10 +4,10 @@ extrator_worker.py
 Worker de extração em segundo plano.
 
 Fluxo a cada ciclo:
-  1. Busca documentos com status = "pendente" no banco
+  1. Busca despesas com status = "pendente" no banco
   2. Marca como "extraindo" (evita processamento duplicado)
   3. Baixa o arquivo do Supabase Storage
-  4. Chama o Gemini via DocumentoParser para extrair os dados
+  4. Chama o Gemini via DespesaParser para extrair os dados
   5. Atualiza o registro com os dados extraídos + status = "extraido"
   6. Em caso de erro, marca status = "erro" e registra a mensagem
 
@@ -36,12 +36,12 @@ def _get_supabase():
     return create_client(url, key)
 
 
-async def _processar_documento(supabase, doc: dict) -> None:
+async def _processar_despesa(supabase, doc: dict) -> None:
     doc_id       = doc["id"]
     storage_path = doc["storage_path"]
     bucket       = doc["bucket"]
 
-    logger.info(f"[worker] processando documento {doc_id} — {storage_path}")
+    logger.info(f"[worker] processando despesa {doc_id} — {storage_path}")
 
     try:
         # Marca como "extraindo" para evitar reprocessamento paralelo
@@ -61,7 +61,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
                     "png": "image/png", "pdf": "application/pdf"}
         mime_type = mime_map.get(ext, "application/octet-stream")
 
-        # Cria um UploadFile simulado para o DocumentoParser
+        # Cria um UploadFile simulado para o DespesaParser
         from fastapi import UploadFile
         from starlette.datastructures import UploadFile as StarletteUploadFile
         import tempfile
@@ -79,9 +79,9 @@ async def _processar_documento(supabase, doc: dict) -> None:
                 headers={"content-type": mime_type},
             )
 
-            from src.utils.documento_parser import DocumentoParser
-            parser = DocumentoParser()
-            dados, hash_arquivo = await parser.parse_documento(upload)
+            from src.utils.despesa_parser import DespesaParser
+            parser = DespesaParser()
+            dados, hash_arquivo = await parser.parse_despesa(upload)
 
         # Remove arquivo temporário
         os.unlink(tmp_path)
@@ -175,7 +175,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
             "status":            "extraido",
             "fornecedor":        dados.nome_fornecedor,
             "cnpj_cpf":          dados.cnpj_cpf_fornecedor,
-            "numero_doc":        dados.numero_documento,
+            "numero_doc":        dados.numero_despesa,
             "data_emissao":      _clean_date(dados.data_emissao),
             "data_vencimento":   _clean_date(dados.data_vencimento),
             "data_pagamento":    _clean_date(dados.data_pagamento),
@@ -194,7 +194,7 @@ async def _processar_documento(supabase, doc: dict) -> None:
 
         supabase.table("despesas").update(update_data).eq("id", doc_id).execute()
 
-        logger.info(f"[worker] documento {doc_id} extraído com sucesso")
+        logger.info(f"[worker] despesa {doc_id} extraído com sucesso")
 
     except Exception as e:
         logger.error(f"[worker] erro ao processar {doc_id}: {e}")
@@ -213,7 +213,7 @@ async def rodar_worker() -> None:
         try:
             supabase = _get_supabase()
 
-            # Busca documentos pendentes (máx 5 por ciclo para não sobrecarregar)
+            # Busca despesas pendentes (máx 5 por ciclo para não sobrecarregar)
             result = (
                 supabase.table("despesas")
                 .select("id, bucket, storage_path, filename, condominio_id, administradora_id")
@@ -226,11 +226,11 @@ async def rodar_worker() -> None:
             docs = result.data or []
 
             if docs:
-                logger.info(f"[worker] {len(docs)} documento(s) na fila (pendente/extraindo)")
+                logger.info(f"[worker] {len(docs)} despesa(s) na fila (pendente/extraindo)")
                 for doc in docs:
-                    await _processar_documento(supabase, doc)
+                    await _processar_despesa(supabase, doc)
             else:
-                logger.debug("[worker] nenhum documento na fila")
+                logger.debug("[worker] nenhum despesa na fila")
 
         except Exception as e:
             logger.error(f"[worker] erro no ciclo: {e}")

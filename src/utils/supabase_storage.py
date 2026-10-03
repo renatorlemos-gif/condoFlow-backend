@@ -41,22 +41,22 @@ def _build_filename(prefix: str, original_filename: str) -> str:
 
 
 # ------------------------------------------------------------------ #
-#  Upload de documento fiscal (foto/PDF de NF ou recibo)             #
-#  Bucket: condominios  |  Pasta: documentos/                        #
+#  Upload de despesa fiscal (foto/PDF de NF ou recibo)             #
+#  Bucket: condominios  |  Pasta: despesas/                        #
 # ------------------------------------------------------------------ #
 
-def upload_documento(
+def upload_despesa(
     file_bytes: bytes,
     filename: str,
     mime_type: str,
     prefixo: str | None = None,
 ) -> dict:
     """
-    Salva foto ou PDF de documento fiscal no Supabase Storage.
+    Salva foto ou PDF de despesa fiscal no Supabase Storage.
 
     Estrutura:
         bucket: condominios
-        path:   documentos/{condo-slug}_{YYYY-MM-DD}_{uuid}_{filename}
+        path:   despesas/{condo-slug}_{YYYY-MM-DD}_{uuid}_{filename}
 
     Retorna dict com path e URL assinada (válida 1h).
     """
@@ -64,7 +64,7 @@ def upload_documento(
     bucket   = os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "condominios")
     condo    = (prefixo or os.environ.get("CONDO_NOME", "condominio")).strip()
     prefix   = _slugify(condo)
-    path     = f"documentos/{_build_filename(prefix, filename)}"
+    path     = f"despesas/{_build_filename(prefix, filename)}"
 
     supabase.storage.from_(bucket).upload(
         path=path,

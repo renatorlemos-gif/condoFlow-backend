@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from enum import Enum
-from src.utils.documento_parser import DadosExtraidosDTO
+from src.utils.despesa_parser import DadosExtraidosDTO
 
 class OrigemSugestaoEnum(str, Enum):
     HISTORICO_FORNECEDOR = "HISTORICO_FORNECEDOR"

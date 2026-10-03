@@ -6,7 +6,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.documento_router import router as documento_router
+from src.api.despesa_router import router as despesa_router
 from src.api.validacao_router import router as validacao_router
 from src.api.conciliacao_router import router as conciliacao_router
 from src.api.contexto_router import router as contexto_router
@@ -53,7 +53,7 @@ app.add_middleware(
 # ------------------------------------------------------------------ #
 #  Routers                                                            #
 # ------------------------------------------------------------------ #
-app.include_router(documento_router)
+app.include_router(despesa_router)
 app.include_router(validacao_router)
 app.include_router(conciliacao_router)
 app.include_router(contexto_router)

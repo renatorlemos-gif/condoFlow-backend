@@ -14,7 +14,7 @@ class ExportadorService:
             self.db.table("transacoes_extrato")
             .select(
                 "id, data_transacao, valor, descricao, banco, "
-                "conciliacoes!inner(id, documento_id, despesas(id, data_pagamento, data_emissao, fornecedor, numero_doc, descricao, sugestao_contabil, valor_total, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))))"
+                "conciliacoes!inner(id, despesa_id, despesas(id, data_pagamento, data_emissao, fornecedor, numero_doc, descricao, sugestao_contabil, valor_total, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))))"
             )
             .eq("condominio_id", condominio_id)
             .execute()
@@ -26,7 +26,7 @@ class ExportadorService:
              raise HTTPException(status_code=400, detail="Nenhum lançamento conciliado encontrado para exportação.")
 
         pendencias = []
-        documentos = []
+        despesas = []
         
         # Validar pendências ("A Classificar" ou null)
         for t in transacoes:
@@ -34,7 +34,7 @@ class ExportadorService:
             for c in concs:
                 doc = c.get("despesas") or {}
                 if doc:
-                    documentos.append(doc)
+                    despesas.append(doc)
 
                 sugestao = doc.get("sugestao_contabil")
                 
@@ -55,7 +55,7 @@ class ExportadorService:
         # Gerar CSV em formato Windows-1252 com virgula para decimal
         output = io.StringIO()
         
-        for doc in documentos:
+        for doc in despesas:
             raw_date = doc.get("data_pagamento") or doc.get("data_emissao") or ""
             data_fmt = ""
             if raw_date:
@@ -78,7 +78,7 @@ class ExportadorService:
             if not conta_deb or not conta_cred:
                 import logging
                 logger = logging.getLogger("exportador")
-                logger.warning(f"Documento {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
+                logger.warning(f"Despesa {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
                 continue
             
             val = float(doc.get("valor_total") or 0)
@@ -120,7 +120,7 @@ class ExportadorService:
             mes, ano = competencia.split("/")
             prefix = f"{ano}-{mes}"
 
-        # 1. Documentos validados
+        # 1. Despesas validados
         res_val = (
             self.db.table("despesas")
             .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
@@ -130,7 +130,7 @@ class ExportadorService:
             .execute()
         )
         
-        # 2. Documentos conciliados
+        # 2. Despesas conciliados
         res_conc = (
             self.db.table("despesas")
             .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
@@ -152,7 +152,7 @@ class ExportadorService:
             if dt and dt.startswith(prefix):
                 docs_conc.append(d)
 
-        documentos = []
+        despesas = []
         for d in docs_val + docs_conc:
             conta_despesa = d.get("plano_contas") or {}
             conta_deb = conta_despesa.get("codigo_contabil") or ""
@@ -161,7 +161,7 @@ class ExportadorService:
             fp_pc = fp.get("plano_contas") or {}
             conta_cred = fp_pc.get("codigo_contabil") or ""
                             
-            documentos.append({
+            despesas.append({
                 "id": d["id"],
                 "fornecedor": d.get("fornecedor"),
                 "numero_doc": d.get("numero_doc"),
@@ -173,19 +173,19 @@ class ExportadorService:
                 "conta_cred": conta_cred
             })
             
-        return documentos
+        return despesas
 
     def gerar_lote_us42(self, condominio_id: str, competencia: str) -> bytes:
-        documentos = self.obter_preview_us42(condominio_id, competencia)
+        despesas = self.obter_preview_us42(condominio_id, competencia)
 
-        if not documentos:
+        if not despesas:
             raise HTTPException(status_code=400, detail="Nuo ho lanamentos qualificados para exportauo neste perodo.")
 
         import logging
         logger = logging.getLogger("exportador")
         output = io.StringIO()
 
-        for doc in documentos:
+        for doc in despesas:
             # C. Credora (Banco/Fonte - diminui o ativo)
             conta_cred = doc.get("conta_cred") or ""
             
@@ -193,7 +193,7 @@ class ExportadorService:
             conta_deb = doc.get("conta_deb") or ""
 
             if not conta_cred or not conta_deb:
-                logger.warning(f"Documento {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
+                logger.warning(f"Despesa {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
                 continue
 
             raw_date = doc.get("data_pagamento") or doc.get("data_emissao") or ""

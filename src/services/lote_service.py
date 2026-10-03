@@ -2,13 +2,13 @@ from uuid import uuid4
 from typing import List
 from pydantic import BaseModel
 
-from src.utils.documento_parser import DadosExtraidosDTO
+from src.utils.despesa_parser import DadosExtraidosDTO
 from src.services.conhecimento_service import SugestaoContabilDTO
 
 class ItemLoteContabil(BaseModel):
     id: str
     condominio_id: str
-    hash_documento: str
+    hash_despesa: str
     data_movimento: str
     valor: float
     conta_debito_codigo: str
@@ -25,7 +25,7 @@ class LoteService:
         novo_item = ItemLoteContabil(
             id=str(uuid4()),
             condominio_id=condomino_id,
-            hash_documento=hash_doc,
+            hash_despesa=hash_doc,
             data_movimento=dados.data_pagamento or dados.data_vencimento or "2026-08-23",
             valor=dados.valor_total,
             conta_debito_codigo=sugestao.conta_debito_codigo,
