@@ -36,7 +36,7 @@ async def extract_balancete_data(pdf_bytes: bytes) -> list:
         f_dump.write(texto_pdf_flat)
     
     # Regex permissiva ancorada no valor monetário
-    padrao = re.compile(r'([\d.]+\,\d{2})\s+([A-Za-zÀ-ÿ\s/.-]+?)\s+(\d{2}/\d{4})\s+(\d{3})\s+(.*?)(?=\s+[\d.]+\,\d{2}\s+[A-Za-zÀ-ÿ]|$)')
+    padrao = re.compile(r'([\d.]+\,\d{2})\s+(.*?)\s+(\d{2}/\d{4})\s+([A-Z0-9]{3})\s+(.*?)(?=\s+[\d.]+\,\d{2}\s+|$)')
 
     for match in padrao.finditer(texto_pdf_flat):
         resultados.append({

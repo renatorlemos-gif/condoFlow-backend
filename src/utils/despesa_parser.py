@@ -147,7 +147,7 @@ com atenção:
         )
 
         for attempt in range(1, 5):
-            modelo_usado = "gemini-3.1-flash-lite" if attempt <= 2 else "gemini-3.1-flash"
+            modelo_usado = "gemini-3.1-flash-lite" if attempt <= 2 else "gemini-3.8-flash"
             try:
                 response = await asyncio.to_thread(
                     self.client.models.generate_content,

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import logging
 import math
@@ -22,23 +22,57 @@ class ContextoService:
         return dot / (norm1 * norm2)
 
     @staticmethod
-    def atualizar_contexto(supabase, admin_id: str, conta_despesa_id: str, novo_descritivo: str):
+    def atualizar_contexto(supabase, admin_id: str, codigo_contabil: str, novo_descritivo: str, conta_descricao_in: str = None) -> tuple:
         try:
             # 1. Puxa os dados da conta atual
             res = (
                 supabase.table("plano_contas")
                 .select("descricao, contexto, embedding")
                 .eq("administradora_id", str(admin_id))
-                .eq("id", conta_despesa_id)
+                .eq("codigo_contabil", codigo_contabil)
                 .execute()
             )
             
-            if not res.data:
-                logger.warning(f"[ContextoService] Conta {conta_despesa_id} no encontrada para a administradora {admin_id}.")
-                return
+            client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
+            if not res.data:
+                logger.warning(f"[ContextoService] Conta {codigo_contabil} não encontrada para a administradora {admin_id}. Inserindo nova conta.")
+                
+                conta_descricao = conta_descricao_in or "Nova Conta"
+                prompt = (
+                    f"Sintetize uma definicao inicial de contexto para a conta contabil descrita por '{conta_descricao}' "
+                    f"baseada no seguinte historico/despesa: '{novo_descritivo}'. "
+                    f"Sintetize um texto explicativo da finalidade contabil, escopo da conta e exemplos tipicos de despesa. "
+                    f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o contexto sintetizado, sem introducoes."
+                )
+                resp = client.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
+                novo_contexto = resp.text.strip()
+                
+                texto_ancoragem = f"{conta_descricao} - {novo_contexto}"
+                emb_res = client.models.embed_content(
+                    model="gemini-embedding-2",
+                    contents=texto_ancoragem,
+                    config=types.EmbedContentConfig(output_dimensionality=768)
+                )
+                novo_embedding = emb_res.embeddings[0].values
+                
+                supabase.table("plano_contas").insert({
+                    "administradora_id": str(admin_id),
+                    "codigo_contabil": codigo_contabil,
+                    "descricao": conta_descricao,
+                    "contexto": novo_contexto,
+                    "embedding": list(novo_embedding),
+                    "criada_por_ia": True
+                }).execute()
+                
+                return True, novo_contexto
+                
             conta_data = res.data[0]
-            conta_descricao = conta_data.get("descricao") or ""
+            conta_descricao = conta_data.get("descricao") or (conta_descricao_in or "Nova Conta")
             contexto_atual = conta_data.get("contexto") or ""
             embedding_atual = conta_data.get("embedding")
             
@@ -47,8 +81,6 @@ class ContextoService:
                     embedding_atual = json.loads(embedding_atual)
                 except Exception:
                     embedding_atual = None
-
-            client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
             # Se ja existir embedding, verifica similaridade
             if embedding_atual:
@@ -61,10 +93,10 @@ class ContextoService:
                 
                 sim = ContextoService._cosine_similarity(novo_descritivo_embedding, embedding_atual)
                 if sim > 0.85:
-                    logger.info(f"[ContextoService] Atualizao ignorada: Similaridade de cosseno {sim:.4f} > 0.85 (A IA j conhece este padro para a conta {conta_despesa_id}).")
-                    return
+                    logger.info(f"[ContextoService] Atualizacao ignorada: Similaridade de cosseno {sim:.4f} > 0.85 (A IA ja conhece este padro para a conta {codigo_contabil}).")
+                    return False, None
                 else:
-                    logger.info(f"[ContextoService] Contexto precisa ser atualizado para a conta {conta_despesa_id}: similaridade={sim:.4f} <= 0.85.")
+                    logger.info(f"[ContextoService] Contexto precisa ser atualizado para a conta {codigo_contabil}: similaridade={sim:.4f} <= 0.85.")
             
             # Se nao existir ou se for <= 0.85
             if contexto_atual:
@@ -83,7 +115,7 @@ class ContextoService:
                 )
 
             resp = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.1-flash-lite",
                 contents=[prompt],
                 config=types.GenerateContentConfig(temperature=0.0)
             )
@@ -104,9 +136,10 @@ class ContextoService:
                 "embedding": list(novo_embedding),
                 "criada_por_ia": True,
                 "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("administradora_id", str(admin_id)).eq("id", conta_despesa_id).execute()
+            }).eq("administradora_id", str(admin_id)).eq("codigo_contabil", codigo_contabil).execute()
 
-            logger.info(f"[ContextoService] Contexto atualizado com sucesso para a conta {conta_despesa_id}.")
+            logger.info(f"[ContextoService] Contexto atualizado com sucesso para a conta {codigo_contabil}.")
+            return True, novo_contexto
         except Exception as e:
-            logger.error(f"[ContextoService] Erro ao atualizar contexto da conta {conta_despesa_id}: {e}")
-
+            logger.error(f"[ContextoService] Erro ao atualizar contexto da conta {codigo_contabil}: {e}")
+            return False, None

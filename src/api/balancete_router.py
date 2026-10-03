@@ -122,23 +122,29 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                     admin_id, conta = chave
                     desc_join = " | ".join(list(grupo_data["descricoes"]))
                     
-                    ContextoService.atualizar_contexto(supabase, str(admin_id), str(conta), desc_join)
+                    sucesso, contexto_gerado = ContextoService.atualizar_contexto(supabase, str(admin_id), str(conta), desc_join, grupo_data.get("conta_descricao", "Nova Conta"))
                     
                     # Atualiza processado_ia
-                    ids_to_update = grupo_data["ids"]
-                    if ids_to_update:
-                        for chunk_i in range(0, len(ids_to_update), 50):
-                            chunk_ids = ids_to_update[chunk_i:chunk_i+50]
-                            supabase.table("balancetes_historicos").update({"processado_ia": True}).in_("id", chunk_ids).execute()
+                    if sucesso:
+                        ids_to_update = grupo_data["ids"]
+                        if ids_to_update:
+                            for chunk_i in range(0, len(ids_to_update), 50):
+                                chunk_ids = ids_to_update[chunk_i:chunk_i+50]
+                                supabase.table("balancetes_historicos").update({"processado_ia": True}).in_("id", chunk_ids).execute()
                             
-                    resultados.append({
-                        "conta": conta,
-                        "conta_descricao": grupo_data.get("conta_descricao"),
-                        "contexto": "Atualizado via ContextoService"
-                    })
+                        resultados.append({
+                            "conta": conta,
+                            "conta_descricao": grupo_data.get("conta_descricao"),
+                            "contexto": contexto_gerado
+                        })
+                    else:
+                        erros += 1
                 except Exception as e:
                     logger.error(f"Erro ao processar conta {conta}: {e}")
                     erros += 1
+                
+                import asyncio
+                await asyncio.sleep(4.5)
             
             # Pausa para aliviar o rate limit da API gratuita do Gemini
             await asyncio.sleep(2)
