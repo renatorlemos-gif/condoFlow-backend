@@ -113,7 +113,8 @@ com atenção:
   (4) Parcelamentos: Se a despesa indicar parcelamento, inclua no fim " - parcela X/Y".
   (5) Formatação: Escreva em português. Use capitalização normal de frase (só primeira letra em maiúscula, exceto nomes próprios). NUNCA use CAIXA ALTA em toda a frase.
 - Procure pela "Chave de Acesso" (geralmente 44 dígitos para NFe ou 50 dígitos para NFSe Nacional) em TODAS as páginas da despesa, especialmente naquelas que se parecem com uma Nota Fiscal, e extraia em 'chave_acesso' (apenas os dígitos numéricos). Se não existir, retorne null.
-- Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade: busque no texto descritivo por termos como 'ref. ao mês de', 'competência', 'período', etc. O uso do "mês da data de emissão" só deve ser feito como fallback extremo caso a despesa seja totalmente omissa quanto à execução. Se não for possível determinar, retorne null."""
+- Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade 1: data de execução do serviço/compra no texto. Prioridade 2: Mês da emissão da nota. Prioridade 3: Mês do pagamento/vencimento. A competência NUNCA DEVE FICAR NULA, use o mês de pagamento como último recurso.
+- FORNECEDOR/RECEBEDOR: O fornecedor é SEMPRE a pessoa física ou jurídica que prestou o serviço, vendeu o produto ou o funcionário recebendo o salário. NUNCA coloque o nome do Condomínio (que está pagando a conta) como fornecedor."""
 
         response_schema = types.Schema(
             type=types.Type.OBJECT,
@@ -140,8 +141,7 @@ com atenção:
                 ),
                 "competencia": types.Schema(
                     type=types.Type.STRING,
-                    description="Competência contábil no formato MM/YYYY",
-                    nullable=True,
+                    description="Competência contábil no formato MM/YYYY. OBRIGATÓRIO: se omisso, deduza pelo pagamento/emissão.",
                 ),
             },
         )
@@ -174,6 +174,16 @@ com atenção:
 
         bruto = _ExtracaoBrutaSchema.model_validate_json(response.text)
 
+        valor_processado = parse_valor_brl(bruto.valor_total_bruto) or 0.0
+
+        comp = bruto.competencia
+        if not comp or comp.strip() == "":
+            fallback_date = bruto.data_pagamento or bruto.data_emissao or bruto.data_vencimento
+            if fallback_date and len(fallback_date) >= 7:
+                parts = fallback_date.split("-")
+                if len(parts) >= 2:
+                    comp = f"{parts[1]}/{parts[0]}"
+
         dados_extraidos = DadosExtraidosDTO(
             cnpj_cpf_fornecedor=bruto.cnpj_cpf_fornecedor,
             nome_fornecedor=bruto.nome_fornecedor,
@@ -181,11 +191,11 @@ com atenção:
             data_emissao=bruto.data_emissao,
             data_vencimento=bruto.data_vencimento,
             data_pagamento=bruto.data_pagamento,
-            valor_total=parse_valor_brl(bruto.valor_total_bruto) or 0.0,
+            valor_total=valor_processado,
             descricao=bruto.descricao,
             contexto_sintetizado=bruto.contexto_sintetizado,
             chave_acesso=bruto.chave_acesso,
-            competencia=bruto.competencia,
+            competencia=comp,
         )
 
         return dados_extraidos, hash_arquivo

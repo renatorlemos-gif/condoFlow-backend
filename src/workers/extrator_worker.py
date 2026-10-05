@@ -218,14 +218,14 @@ async def rodar_worker() -> None:
 
             # Busca despesas pendentes (máx 5 por ciclo para não sobrecarregar)
             def _poll():
-                return supabase.table("despesas").select("id, bucket, storage_path, filename, condominio_id, administradora_id").in_("status", ["pendente", "extraindo"]).order("criado_em").limit(5).execute()
+                return supabase.table("despesas").select("id, bucket, storage_path, filename, condominio_id, administradora_id").eq("status", "pendente").order("criado_em").limit(5).execute()
             
             result = await asyncio.to_thread(_poll)
 
             docs = result.data or []
 
             if docs:
-                logger.info(f"[worker] {len(docs)} despesa(s) na fila (pendente/extraindo)")
+                logger.info(f"[worker] {len(docs)} despesa(s) na fila (pendente)")
                 for doc in docs:
                     await _processar_despesa(supabase, doc)
             else:
