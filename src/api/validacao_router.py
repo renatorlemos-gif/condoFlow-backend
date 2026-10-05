@@ -440,9 +440,19 @@ def _aprender_com_validacao(admin_id: int | str, conta_despesa_id: str, contexto
     
     try:
         supabase = _get_supabase()
-        ContextoService.atualizar_contexto(supabase, str(admin_id), conta_despesa_id, contexto_despesa)
+        
+        # conta_despesa_id the primary key (UUID). We need the actual codigo_contabil.
+        res = supabase.table("plano_contas").select("codigo_contabil, descricao").eq("id", conta_despesa_id).execute()
+        if not res.data:
+            logger.warning(f"Conta {conta_despesa_id} no encontrada para aprendizado.")
+            return
+            
+        codigo_contabil = res.data[0]["codigo_contabil"]
+        descricao = res.data[0]["descricao"]
+        
+        ContextoService.atualizar_contexto(supabase, str(admin_id), codigo_contabil, contexto_despesa, descricao)
     except Exception as e:
-        logger.error(f"Erro no aprendizado contnuo: {e}")
+        logger.error(f"Erro no aprendizado contínuo: {e}")
 
 
 class ScanQrResponse(BaseModel):
