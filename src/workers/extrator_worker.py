@@ -45,9 +45,12 @@ async def _processar_despesa(supabase, doc: dict) -> None:
 
     try:
         # Marca como "extraindo" para evitar reprocessamento paralelo
-        supabase.table("despesas").update({
-            "status": "extraindo",
-        }).eq("id", doc_id).execute()
+        def _update_extraindo():
+            supabase.table("despesas").update({
+                "status": "extraindo",
+            }).eq("id", doc_id).execute()
+        
+        await asyncio.to_thread(_update_extraindo)
 
         # Baixa o arquivo do Supabase Storage
         file_bytes = await asyncio.to_thread(
@@ -192,7 +195,7 @@ async def _processar_despesa(supabase, doc: dict) -> None:
         if embedding_val:
             update_data["embedding"] = list(embedding_val)
 
-        supabase.table("despesas").update(update_data).eq("id", doc_id).execute()
+        await asyncio.to_thread(lambda: supabase.table("despesas").update(update_data).eq("id", doc_id).execute())
 
         logger.info(f"[worker] despesa {doc_id} extraído com sucesso")
 
@@ -214,14 +217,10 @@ async def rodar_worker() -> None:
             supabase = _get_supabase()
 
             # Busca despesas pendentes (máx 5 por ciclo para não sobrecarregar)
-            result = (
-                supabase.table("despesas")
-                .select("id, bucket, storage_path, filename, condominio_id, administradora_id")
-                .in_("status", ["pendente", "extraindo"])
-                .order("criado_em")
-                .limit(5)
-                .execute()
-            )
+            def _poll():
+                return supabase.table("despesas").select("id, bucket, storage_path, filename, condominio_id, administradora_id").in_("status", ["pendente", "extraindo"]).order("criado_em").limit(5).execute()
+            
+            result = await asyncio.to_thread(_poll)
 
             docs = result.data or []
 

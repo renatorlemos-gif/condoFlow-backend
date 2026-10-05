@@ -1,0 +1,87 @@
+﻿commit badac4209c0b0e6e15ab564379d453bee5b3db48
+Author: DevTeam Developer <devteam@condoflow.local>
+Date:   Fri Sep 18 18:06:18 2026 -0300
+
+    feat(core): implementa leitura de URL QR Code, migra PDF/Workers para ThreadPool isolada e ativa HyDE embeddings
+
+diff --git a/src/utils/__pycache__/documento_parser.cpython-311.pyc b/src/utils/__pycache__/documento_parser.cpython-311.pyc
+index c5921fe..0e6ab80 100644
+Binary files a/src/utils/__pycache__/documento_parser.cpython-311.pyc and b/src/utils/__pycache__/documento_parser.cpython-311.pyc differ
+diff --git a/src/utils/documento_parser.py b/src/utils/documento_parser.py
+index 6b9932c..4649c04 100644
+--- a/src/utils/documento_parser.py
++++ b/src/utils/documento_parser.py
+@@ -18,6 +18,8 @@ class DadosExtraidosDTO(BaseModel):
+     data_pagamento: str | None = Field(default=None, description="Data no formato YYYY-MM-DD")
+     valor_total: float | None = Field(default=None, description="Valor monet├írio total, j├í convertido para float")
+     descricao: str | None = Field(default=None, description="Descri├º├úo dos servi├ºos/produtos")
++    contexto_sintetizado: str | None = Field(default=None, description="Defini├º├úo cont├íbil do servi├ºo/produto, preservando termos t├®cnicos")
++    url_sefaz_qr: str | None = Field(default=None, description="URL fiscal de Sefaz")
+ 
+ 
+ class _ExtracaoBrutaSchema(BaseModel):
+@@ -33,6 +35,8 @@ class _ExtracaoBrutaSchema(BaseModel):
+     data_pagamento: str | None = None
+     valor_total_bruto: str | None = None
+     descricao: str | None = None
++    contexto_sintetizado: str | None = None
++    url_sefaz_qr: str | None = None
+ 
+ 
+ def parse_valor_brl(valor_str: str | None) -> float | None:
+@@ -82,6 +86,7 @@ class DocumentoParser:
+ documento fiscal (nota fiscal, recibo ou fatura) seguindo estas regras
+ com aten├º├úo:
+ 
++- PRIORIDADE M├üXIMA: Busque prioritariamente pelas informa├º├Áes do COMPROVANTE DE PAGAMENTO (Pix, TED, boletos pagos), extraindo a 'data exata do pagamento' e o 'valor efetivamente pago'. Caso o documento n├úo possua dados de pagamento, utilize como fallback os dados de emiss├úo e valor da Nota Fiscal/Fatura.
+ - valor_total_bruto: o VALOR TOTAL A PAGAR do documento ÔÇö normalmente o
+   campo "VALOR TOTAL DA NOTA", "VALOR TOTAL DO DOCUMENTO" ou equivalente.
+   N├âO confunda com "VALOR UNIT├üRIO", "V. TOTAL" de um item espec├¡fico,
+@@ -95,7 +100,13 @@ com aten├º├úo:
+   converta, N├âO fa├ºa nenhuma conta ÔÇö apenas copie o texto do valor.
+ - Datas sempre no formato YYYY-MM-DD.
+ - Campos que n├úo aparecerem no documento devem ficar nulos, n├úo invente
+-  valores."""
++  valores.
++- contexto_sintetizado: Para gerar o contexto_sintetizado, voc├¬ DEVE remover 
++  nomes pr├│prios (empresas, pessoas) e n├║meros, mas DEVE PRESERVAR RIGOROSAMENTE 
++  os termos t├®cnicos e o n├║cleo do servi├ºo/produto prestado (ex: Autovistoria, 
++  Auditoria, Seguro, Material El├®trico, Hidr├íulica). O texto deve ser uma defini├º├úo 
++  cont├íbil precisa do servi├ºo/produto exato.
++- Procure por links fiscais no documento (geralmente sob um QR Code, chave de acesso ou link direto para Sefaz) e preencha url_sefaz_qr apenas com a URL bruta (iniciada em http)."""
+ 
+         response_schema = types.Schema(
+             type=types.Type.OBJECT,
+@@ -111,12 +122,21 @@ com aten├º├úo:
+                     description="Valor total da nota, exatamente como impresso, com pontua├º├úo original (ex: '105.900,00')",
+                 ),
+                 "descricao": types.Schema(type=types.Type.STRING, description="Descri├º├úo dos servi├ºos/produtos"),
++                "contexto_sintetizado": types.Schema(
++                    type=types.Type.STRING,
++                    description="Defini├º├úo cont├íbil precisa do servi├ºo/produto, preservando termos t├®cnicos e n├║cleo da despesa",
++                ),
++                "url_sefaz_qr": types.Schema(
++                    type=types.Type.STRING,
++                    description="URL da Sefaz para verifica├º├úo do documento, iniciada em http",
++                ),
+             },
+         )
+ 
+         for attempt in range(1, 4):
+             try:
+-                response = self.client.models.generate_content(
++                response = await asyncio.to_thread(
++                    self.client.models.generate_content,
+                     model="gemini-3.1-flash-lite",
+                     contents=[
+                         types.Part.from_bytes(
+@@ -149,6 +169,8 @@ com aten├º├úo:
+             data_pagamento=bruto.data_pagamento,
+             valor_total=parse_valor_brl(bruto.valor_total_bruto) or 0.0,
+             descricao=bruto.descricao,
++            contexto_sintetizado=bruto.contexto_sintetizado,
++            url_sefaz_qr=bruto.url_sefaz_qr,
+         )
+ 
+         return dados_extraidos, hash_arquivo
+\ No newline at end of file

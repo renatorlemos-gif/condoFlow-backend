@@ -83,12 +83,12 @@ async def upload_despesa_fiscal(
 
     # 1. Upload para o Supabase Storage
     try:
-        resultado = upload_despesa(
+        resultado = await asyncio.to_thread(lambda: upload_despesa(
             file_bytes=final_bytes,
             filename=filename,
             mime_type=mime_type,
             prefixo=condominio_id,
-        )
+        ))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -96,16 +96,19 @@ async def upload_despesa_fiscal(
 
     # 2. Insere registro no banco com status "pendente"
     try:
-        supabase = _get_supabase()
-        insert = supabase.table("despesas").insert({
-            "administradora_id": administradora_id,
-            "condominio_id": condominio_id,
-            "bucket":       resultado["bucket"],
-            "storage_path": resultado["path"],
-            "filename":     filename,
-            "status":       "pendente",
-            "criado_em":    datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        def _insert_db():
+            supabase = _get_supabase()
+            return supabase.table("despesas").insert({
+                "administradora_id": administradora_id,
+                "condominio_id": condominio_id,
+                "bucket":       resultado["bucket"],
+                "storage_path": resultado["path"],
+                "filename":     filename,
+                "status":       "pendente",
+                "criado_em":    datetime.now(timezone.utc).isoformat(),
+            }).execute()
+
+        insert = await asyncio.to_thread(_insert_db)
 
         despesa_id = insert.data[0]["id"]
 

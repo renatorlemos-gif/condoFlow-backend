@@ -86,7 +86,7 @@ class DespesaParser:
 despesa fiscal (nota fiscal, recibo ou fatura) seguindo estas regras
 com atenção:
 
-- PRIORIDADE MÁXIMA: O Comprovante de Pagamento (Pix, TED, boletos pagos) deve ser utilizado EXCLUSIVAMENTE para extrair a 'data_pagamento'. Valor total, competência e dados do fornecedor ou do documento DEVEM ser extraídos obrigatoriamente da Fatura/Nota Fiscal. Não deixe a presença do comprovante ocultar as informações principais da nota.
+- PRIORIDADE MÁXIMA: Busque prioritariamente pelas informações do COMPROVANTE DE PAGAMENTO (Pix, TED, boletos pagos), extraindo a data exata do pagamento e o valor efetivamente pago.
 - valor_total_bruto: o VALOR TOTAL A PAGAR da despesa — normalmente o
   campo "VALOR TOTAL DA NOTA", "VALOR TOTAL DA DESPESA" ou equivalente.
   NÃO confunda com "VALOR UNITÁRIO", "V. TOTAL" de um item específico,
@@ -113,7 +113,7 @@ com atenção:
   (4) Parcelamentos: Se a despesa indicar parcelamento, inclua no fim " - parcela X/Y".
   (5) Formatação: Escreva em português. Use capitalização normal de frase (só primeira letra em maiúscula, exceto nomes próprios). NUNCA use CAIXA ALTA em toda a frase.
 - Procure pela "Chave de Acesso" (geralmente 44 dígitos para NFe ou 50 dígitos para NFSe Nacional) em TODAS as páginas da despesa, especialmente naquelas que se parecem com uma Nota Fiscal, e extraia em 'chave_acesso' (apenas os dígitos numéricos). Se não existir, retorne null.
-- Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade: busque MANDATORIAMENTE quando o serviço foi executado ou a compra realizada (o mês de referência da prestação do serviço/consumo). O uso do "mês da data de emissão" só deve ser feito como fallback extremo caso a despesa seja totalmente omissa quanto à execução. Se não for possível determinar, retorne null."""
+- Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade: busque no texto descritivo por termos como 'ref. ao mês de', 'competência', 'período', etc. O uso do "mês da data de emissão" só deve ser feito como fallback extremo caso a despesa seja totalmente omissa quanto à execução. Se não for possível determinar, retorne null."""
 
         response_schema = types.Schema(
             type=types.Type.OBJECT,
