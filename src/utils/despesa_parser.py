@@ -2,11 +2,14 @@ import hashlib
 import os
 import re
 import asyncio
+import random
 
 from fastapi import UploadFile
+import pydantic
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 
 
 class DadosExtraidosDTO(BaseModel):
@@ -83,51 +86,38 @@ class DespesaParser:
         hash_arquivo = self.calcular_hash(contents)
 
         prompt = """Você é um especialista contábil brasileiro. Extraia os dados desta
-despesa fiscal (nota fiscal, recibo ou fatura) seguindo estas regras
+despesa fiscal (nota fiscal, recibo, folha de pagamento, fatura) seguindo estas regras
 com atenção:
 
-- PRIORIDADE MÁXIMA: Busque prioritariamente pelas informações do COMPROVANTE DE PAGAMENTO (Pix, TED, boletos pagos), extraindo a data exata do pagamento e o valor efetivamente pago.
-- valor_total_bruto: o VALOR TOTAL A PAGAR da despesa — normalmente o
-  campo "VALOR TOTAL DA NOTA", "VALOR TOTAL DA DESPESA" ou equivalente.
-  NÃO confunda com "VALOR UNITÁRIO", "V. TOTAL" de um item específico,
-  "VALOR TOTAL DOS PRODUTOS" (quando houver frete/desconto/impostos que
-  mudem o total), base de cálculo de impostos ou valores de ICMS/IPI/ISS.
-  Se houver dúvida entre "valor total dos produtos" e "valor total da
-  nota", prefira sempre "valor total da nota" (o que o destinatário
-  efetivamente paga).
-- Retorne valor_total_bruto EXATAMENTE como está impresso na despesa,
-  incluindo a pontuação original brasileira (ex: "105.900,00"). NÃO
-  converta, NÃO faça nenhuma conta — apenas copie o texto do valor.
+- REGRA 1 (PREVALÊNCIA DE PAGAMENTO - REGIME DE CAIXA): O condomínio opera sob Regime de Caixa. QUALQUER comprovação de pagamento (Pix, TED, recibo assinado, boleto quitado, CUPOM FISCAL) PREVALECE SEMPRE sobre a Nota Fiscal para data ('data_pagamento') e valor ('valor_total_bruto'). A Nota Fiscal só é usada para data e valor em último caso absoluto, quando não houver NENHUMA comprovação de pagamento no arquivo.
+- valor_total_bruto: o VALOR TOTAL A PAGAR efetivamente desembolsado. Retorne EXATAMENTE como impresso (ex: "105.900,00"), sem converter ou fazer contas. NÃO confunda com valor unitário, total de item, "valor total dos produtos", bases/impostos ICMS/IPI/ISS (aplicável quando cair no fallback da NF).
 - Datas sempre no formato YYYY-MM-DD.
-- Campos que não aparecerem na despesa devem ficar nulos, não invente
-  valores.
-- contexto_sintetizado: Para gerar o contexto_sintetizado, você DEVE remover 
-  nomes próprios (empresas, pessoas) e números, mas DEVE PRESERVAR RIGOROSAMENTE 
-  os termos técnicos e o núcleo do serviço/produto prestado (ex: Autovistoria, 
-  Auditoria, Seguro, Material Elétrico, Hidráulica). O texto deve ser uma definição 
-  contábil precisa do serviço/produto exato.
-- A 'descricao' deve ser formulada seguindo ESTRITAMENTE estas regras de negócio:
-  (1) Salários/Adiantamentos: "{Tipo} {Nome Completo do Funcionário}".
-  (2) Despesas fiscais: "{Nome do Fornecedor (PF ou PJ)} {Tipo de despesa (NF, NFe, NFCe, etc)} {Número}".
-  (3) Serviços gerais/PF: "{Nome da pessoa} ref. {descrição resumida}".
-  (4) Parcelamentos: Se a despesa indicar parcelamento, inclua no fim " - parcela X/Y".
-  (5) Formatação: Escreva em português. Use capitalização normal de frase (só primeira letra em maiúscula, exceto nomes próprios). NUNCA use CAIXA ALTA em toda a frase.
-- Procure pela "Chave de Acesso" (geralmente 44 dígitos para NFe ou 50 dígitos para NFSe Nacional) em TODAS as páginas da despesa, especialmente naquelas que se parecem com uma Nota Fiscal, e extraia em 'chave_acesso' (apenas os dígitos numéricos). Se não existir, retorne null.
-- Extraia a competência contábil no formato MM/YYYY (em 'competencia'). Prioridade 1: data de execução do serviço/compra no texto. Prioridade 2: Mês da emissão da nota. Prioridade 3: Mês do pagamento/vencimento. A competência NUNCA DEVE FICAR NULA, use o mês de pagamento como último recurso.
-- FORNECEDOR/RECEBEDOR: O fornecedor é SEMPRE a pessoa física ou jurídica que prestou o serviço, vendeu o produto ou o funcionário recebendo o salário. NUNCA coloque o nome do Condomínio (que está pagando a conta) como fornecedor."""
+- Campos que não aparecerem devem ficar nulos, não invente valores.
+- contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico).
+- descricao: Escreva em português, capitalização normal de frase, nunca caixa alta. Siga ESTRITAMENTE estas formatações:
+  (1) Salários/Trabalhistas: "{Tipo} {Nome Completo do Funcionário}".
+  (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}".
+  (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
+  (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
+- chave_acesso: Procurar em TODAS as páginas, apenas os 44 ou 50 dígitos numéricos. null se não existir.
+- REGRA 9 (COMPETÊNCIA): Formato MM/YYYY. Faça uma BUSCA EXAUSTIVA por menções expressas da data/período de execução do serviço ou compra no corpo do texto (ex: "ref. ao mês de", "competência"). Apenas se não encontrar, use a data de emissão. E como último recurso absoluto, a data de pagamento. NUNCA DEVE FICAR NULA.
+- REGRA 10 (FORNECEDOR PF/TRABALHISTA E CONDOMÍNIO): O fornecedor é sempre quem prestou o serviço/vendeu o produto. Em recibos de salários, férias, adiantamentos ou prestadores pessoa física, o 'nome_fornecedor' é SEMPRE o nome completo da pessoa física (funcionário/prestador) e o CPF vai em 'cnpj_cpf_fornecedor'. O Condomínio pagador É TERMINANTEMENTE PROIBIDO de constar como fornecedor. Se não houver número fiscal explícito, 'numero_despesa' deve ser null."""
 
         response_schema = types.Schema(
             type=types.Type.OBJECT,
             properties={
                 "cnpj_cpf_fornecedor": types.Schema(type=types.Type.STRING, description="CNPJ ou CPF do fornecedor"),
-                "nome_fornecedor": types.Schema(type=types.Type.STRING, description="Razão Social ou Nome Fantasia"),
+                "nome_fornecedor": types.Schema(
+                    type=types.Type.STRING, 
+                    description="Razão Social ou Nome Fantasia. Quando funcionário/prestador PF, usar o nome completo."
+                ),
                 "numero_despesa": types.Schema(type=types.Type.STRING, description="Número da Nota Fiscal ou Recibo"),
                 "data_emissao": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
                 "data_vencimento": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
                 "data_pagamento": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
                 "valor_total_bruto": types.Schema(
                     type=types.Type.STRING,
-                    description="Valor total da nota, exatamente como impresso, com pontuação original (ex: '105.900,00')",
+                    description="Valor efetivamente pago conforme comprovação de pagamento; NF apenas se não houver comprovação",
                 ),
                 "descricao": types.Schema(type=types.Type.STRING, description="Descrição dos serviços/produtos"),
                 "contexto_sintetizado": types.Schema(
@@ -146,12 +136,19 @@ com atenção:
             },
         )
 
-        for attempt in range(1, 5):
-            modelo_usado = "gemini-3.1-flash-lite" if attempt <= 2 else "gemini-3.8-flash"
+        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.1-flash-lite")
+        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-3.8-flash")
+        
+        modelo_atual = model_primary
+        max_tentativas = 4
+        tentativas_qualitativas = 0
+        bruto = None
+
+        for attempt in range(1, max_tentativas + 1):
             try:
                 response = await asyncio.to_thread(
                     self.client.models.generate_content,
-                    model=modelo_usado,
+                    model=modelo_atual,
                     contents=[
                         types.Part.from_bytes(
                             data=contents,
@@ -165,14 +162,70 @@ com atenção:
                         temperature=0,
                     ),
                 )
+                
+                bruto = _ExtracaoBrutaSchema.model_validate_json(response.text)
+                
+                valor_processado_tmp = parse_valor_brl(bruto.valor_total_bruto)
+                
+                if valor_processado_tmp is None or not bruto.competencia or bruto.competencia.strip() == "":
+                    if tentativas_qualitativas == 0 and modelo_atual == model_primary:
+                        modelo_atual = model_fallback
+                        tentativas_qualitativas += 1
+                        continue
+                        
                 break
+                
             except Exception as e:
-                if attempt < 4 and ("503" in str(e) or "429" in str(e)):
-                    await asyncio.sleep(2 ** attempt)
+                if isinstance(e, pydantic.ValidationError):
+                    if tentativas_qualitativas == 0 and modelo_atual == model_primary:
+                        modelo_atual = model_fallback
+                        tentativas_qualitativas += 1
+                        continue
+                    else:
+                        if attempt == max_tentativas:
+                            raise Exception(f"Falha qualitativa após escalonamento: {e}")
+                        continue
+                
+                if attempt == max_tentativas:
+                    raise e
+                
+                if isinstance(e, APIError):
+                    if e.code == 429:
+                        is_rpd = False
+                        if e.details:
+                            for detail in e.details:
+                                detail_str = str(detail).lower()
+                                if "perday" in detail_str or "per_day" in detail_str:
+                                    is_rpd = True
+                                    break
+                                    
+                        if is_rpd:
+                            modelo_atual = model_fallback
+                            continue
+                        else:
+                            delay = 30 + random.uniform(0, 30)
+                            if e.details:
+                                for detail in e.details:
+                                    if "retryDelay" in detail:
+                                        try:
+                                            rd = detail["retryDelay"]
+                                            if isinstance(rd, str) and rd.endswith('s'):
+                                                delay = float(rd[:-1])
+                                            elif isinstance(rd, (int, float)):
+                                                delay = float(rd)
+                                        except Exception:
+                                            pass
+                            await asyncio.sleep(delay)
+                    elif e.code == 503:
+                        delay = 30 + random.uniform(0, 30)
+                        await asyncio.sleep(delay)
+                    else:
+                        raise e
                 else:
                     raise e
 
-        bruto = _ExtracaoBrutaSchema.model_validate_json(response.text)
+        if bruto is None:
+            raise Exception("Falha na extração de dados: retorno nulo.")
 
         valor_processado = parse_valor_brl(bruto.valor_total_bruto) or 0.0
 
