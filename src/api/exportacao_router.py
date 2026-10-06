@@ -1,4 +1,4 @@
-﻿import os
+import os
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from supabase import create_client
@@ -15,29 +15,6 @@ def _get_supabase():
         raise RuntimeError("SUPABASE_URL ou SUPABASE_SERVICE_KEY não configuradas.")
     return create_client(url, key)
 
-@router.get("/lote")
-async def exportar_lote_alterdata(
-    condominio_id: str = Query(..., description="ID do condomínio para exportar os lançamentos conciliados"),
-):
-    try:
-        supabase = _get_supabase()
-        service = ExportadorService(supabase)
-        csv_bytes = service.gerar_lote_alterdata(condominio_id)
-        
-        # Enviar como StreamingResponse
-        buffer = io.BytesIO(csv_bytes)
-        
-        return StreamingResponse(
-            buffer,
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename=lote_alterdata_{condominio_id}.csv"
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro interno ao gerar lote: {str(e)}")
 
 @router.get("/preview-us42")
 async def preview_us42(

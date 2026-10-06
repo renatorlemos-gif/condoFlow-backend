@@ -8,111 +8,6 @@ class ExportadorService:
     def __init__(self, db_client: Client):
         self.db = db_client
 
-    def gerar_lote_alterdata(self, condominio_id: str) -> bytes:
-        # Busca transações conciliadas do condomínio
-        result = (
-            self.db.table("transacoes_extrato")
-            .select(
-                "id, data_transacao, valor, descricao, banco, "
-                "conciliacoes!inner(id, despesa_id, despesas(id, data_pagamento, data_emissao, fornecedor, numero_doc, descricao, sugestao_contabil, valor_total, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))))"
-            )
-            .eq("condominio_id", condominio_id)
-            .execute()
-        )
-
-        transacoes = result.data or []
-
-        if not transacoes:
-             raise HTTPException(status_code=400, detail="Nenhum lançamento conciliado encontrado para exportação.")
-
-        pendencias = []
-        despesas = []
-        
-        # Validar pendências ("A Classificar" ou null)
-        for t in transacoes:
-            concs = t.get("conciliacoes") or []
-            for c in concs:
-                doc = c.get("despesas") or {}
-                if doc:
-                    despesas.append(doc)
-
-                sugestao = doc.get("sugestao_contabil")
-                
-                if not sugestao:
-                    pendencias.append(t["id"])
-                    continue
-                    
-                nome_debito = sugestao.get("conta_debito_nome", "")
-                if "A Classificar" in nome_debito or not sugestao.get("conta_debito_codigo"):
-                    pendencias.append(t["id"])
-
-        if pendencias:
-            raise HTTPException(
-                status_code=400, 
-                detail="Existem lançamentos com conta 'A Classificar' ou sem classificação. Regularize antes de exportar."
-            )
-
-        # Gerar CSV em formato Windows-1252 com virgula para decimal
-        output = io.StringIO()
-        
-        for doc in despesas:
-            raw_date = doc.get("data_pagamento") or doc.get("data_emissao") or ""
-            data_fmt = ""
-            if raw_date:
-                raw_date = raw_date[:10]
-                yyyy, mm, dd = raw_date.split("-")
-                data_fmt = f"{dd}/{mm}/{yyyy}"
-
-            # Conta Crédito (Banco/Fonte Pagadora - Diminui Ativo)
-            fp_data = doc.get("fontes_pagadoras") or {}
-            pc_data = fp_data.get("plano_contas") or {}
-            if isinstance(pc_data, dict):
-                conta_cred = pc_data.get("codigo_contabil") or ""
-            else:
-                conta_cred = ""
-            
-            # Conta Débito (Despesa - Aumenta Despesa)
-            plano = doc.get("plano_contas") or {}
-            conta_deb = plano.get("codigo_contabil") or ""
-
-            if not conta_deb or not conta_cred:
-                import logging
-                logger = logging.getLogger("exportador")
-                logger.warning(f"Despesa {doc.get('id')} ignorado na exportação: Partida Dobrada incompleta.")
-                continue
-            
-            val = float(doc.get("valor_total") or 0)
-            val_cents = str(int(round(val * 100)))
-            
-            fornecedor = doc.get("fornecedor") or ""
-            descricao = doc.get("descricao") or ""
-            numero_doc = str(doc.get("numero_doc") or "S/N")
-            
-            historico = descricao or f"PG {fornecedor}"
-            historico = historico.replace(",", " ")  # Evitar quebra do CSV do Alterdata
-            
-            # Formatação com tamanho fixo e vírgulas
-            part_0 = "  "
-            part_1 = f"{conta_cred:<3}"[:3]
-            part_2 = f"{conta_deb:<3}"[:3]
-            part_3 = f"{data_fmt:<10}"[:10]
-            
-            # DT_COTA (MM/YYYY)
-            dt_cota = ""
-            if raw_date:
-                dt_cota = f"{mm}/{yyyy}"
-            part_4 = f"{dt_cota:<7}"[:7]
-            
-            part_5 = f"{historico:<80}"[:80]
-            part_6 = f"{val_cents:0>8}"[-8:]
-            part_7 = f"{numero_doc:<5}"[:5]
-            part_8 = "  "
-            
-            linha = f"{part_0},{part_1},{part_2},{part_3},{part_4},{part_5},{part_6},{part_7},{part_8}\n"
-            output.write(linha)
-                
-        return output.getvalue().encode("cp1252", errors="replace")
-
     def obter_preview_us42(self, condominio_id: str, competencia: str) -> list:
         # competencia is usually in YYYY-MM format from mesAnoSelecionado
         prefix = competencia
@@ -210,24 +105,23 @@ class ExportadorService:
             descricao = doc.get("descricao") or ""
             
             historico = descricao or f"PG {fornecedor}"
-            # Garantia de 80 chars e sem vírgulas (segurança dupla no backend)
-            historico = historico.replace(",", " ")[:80]
+            # Substituir vírgulas e quebras de linha por espaço
+            historico = historico.replace(",", " ").replace("\n", " ").replace("\r", " ")
             
-            # Layout fixo com vírgulas como separador (sem NR_DOC)
-            # BRANCO(2), CDCONTACREDORA(3), CDCONTADEVEDORA(3), DTLANC(10), DT_COTA(7), DSCOMPHISTORICO(80), VLLANC(8), BRANCO(2)
+            # Layout sem posição fixa com vírgulas como separador
             part_0 = "  "
-            part_1 = f"{conta_cred:<3}"[:3]
-            part_2 = f"{conta_deb:<3}"[:3]
-            part_3 = f"{data_fmt:<10}"[:10]
+            part_1 = str(conta_cred)
+            part_2 = str(conta_deb)
+            part_3 = data_fmt
             
             # DT_COTA (MM/YYYY)
             dt_cota = ""
             if raw_date:
                 dt_cota = f"{mm}/{yyyy}"
-            part_4 = f"{dt_cota:<7}"[:7]
+            part_4 = dt_cota
             
-            part_5 = f"{historico:<80}"[:80]
-            part_6 = f"{val_cents:0>8}"[-8:]
+            part_5 = historico
+            part_6 = val_cents
             
             linha = f"{part_0},{part_1},{part_2},{part_3},{part_4},{part_5},{part_6},\n"
             output.write(linha)
