@@ -74,7 +74,10 @@ class ExportadorService:
         despesas = self.obter_preview_us42(condominio_id, competencia)
 
         if not despesas:
-            raise HTTPException(status_code=400, detail="Nuo ho lanamentos qualificados para exportauo neste perodo.")
+            raise HTTPException(status_code=400, detail="Não há lançamentos qualificados para exportação neste período.")
+
+        # Ordenar por data de pagamento (ou emissão como fallback)
+        despesas.sort(key=lambda d: d.get("data_pagamento") or d.get("data_emissao") or "")
 
         import logging
         logger = logging.getLogger("exportador")
