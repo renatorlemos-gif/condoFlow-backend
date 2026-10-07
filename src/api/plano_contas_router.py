@@ -139,8 +139,18 @@ async def delete_conta(conta_id: str):
 async def get_plano_contas(administradora_id: str):
     try:
         supabase = _get_supabase()
-        response = supabase.table("plano_contas").select("id, codigo_contabil, descricao, contexto, updated_at, criada_por_ia").eq("administradora_id", administradora_id).eq("ativo", True).order("codigo_contabil").execute()
-        return {"data": response.data}
+        response = supabase.table("plano_contas").select("id, codigo_contabil, descricao, contexto, updated_at, criada_por_ia").eq("administradora_id", administradora_id).eq("ativo", True).execute()
+        
+        data = response.data or []
+        def sort_key(c):
+            cod = c.get("codigo_contabil") or ""
+            try:
+                return (0, int(cod))
+            except ValueError:
+                return (1, cod)
+        
+        data.sort(key=sort_key)
+        return {"data": data}
     except Exception as e:
         logger.error(f"Erro ao buscar plano de contas: {e}")
         if "ativo" in str(e).lower():
