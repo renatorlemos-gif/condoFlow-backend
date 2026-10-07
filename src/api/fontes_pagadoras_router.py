@@ -23,7 +23,7 @@ class FontePagadoraBase(BaseModel):
     banco: Optional[str] = None
     agencia: Optional[str] = None
     conta: Optional[str] = None
-    plano_conta_id: str
+    plano_conta_id: str | None = None
     exige_conciliacao_extrato: bool = True
 
 class FontePagadoraCreate(FontePagadoraBase):
