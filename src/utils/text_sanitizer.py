@@ -1,7 +1,7 @@
 import re
 
 ACRONYMS = {"LTDA", "S/A", "SA", "ME", "EPP", "EIRELI", "SABESP", "PIX", "NF", "DARF", "CNPJ", "CPF", "MEI", "TED", "DOC"}
-PREPOSITIONS = {"de", "da", "do", "dos", "das", "em", "para", "com", "no", "na", "nos", "nas"}
+PREPOSITIONS = {"de", "da", "do", "dos", "das", "em", "para", "com", "no", "na", "nos", "nas", "e"}
 
 def _clean_word_for_check(w: str) -> str:
     return re.sub(r'[\.,;:]+$', '', w)
@@ -30,6 +30,7 @@ def sanitize_descricao(text: str | None) -> str | None:
     if not text or not str(text).strip():
         return text
     text_str = str(text).strip()
+    is_all_caps = text_str.isupper()
     
     words = text_str.split()
     result = []
@@ -42,5 +43,10 @@ def sanitize_descricao(text: str | None) -> str | None:
             if i == 0:
                 result.append(w.capitalize())
             else:
-                result.append(w.lower())
+                # Se era tudo MAIÚSCULO, rebaixa para formar a frase
+                # Se não, preserva a inteligência do Gemini (nomes próprios)
+                if is_all_caps:
+                    result.append(w.lower())
+                else:
+                    result.append(w)
     return " ".join(result)
