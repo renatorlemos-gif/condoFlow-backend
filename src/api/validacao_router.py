@@ -66,6 +66,8 @@ class DespesaDetalhe(BaseModel):
     condominio_id: str | None
     chave_acesso: str | None
     competencia: str | None = None
+    conta_despesa_id: str | None = None
+    fonte_pagadora_id: str | None = None
     criado_em: str
     extraido_em: str | None
     erro_msg: str | None
