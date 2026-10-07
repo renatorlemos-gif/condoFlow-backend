@@ -93,8 +93,9 @@ com atenção:
 - valor_total_bruto: o VALOR TOTAL A PAGAR efetivamente desembolsado. Retorne EXATAMENTE como impresso (ex: "105.900,00"), sem converter ou fazer contas. NÃO confunda com valor unitário, total de item, "valor total dos produtos", bases/impostos ICMS/IPI/ISS (aplicável quando cair no fallback da NF).
 - Datas sempre no formato YYYY-MM-DD.
 - Campos que não aparecerem devem ficar nulos, não invente valores.
-- contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico).
-- descricao: Escreva em português, capitalização normal de frase, nunca caixa alta. Siga ESTRITAMENTE estas formatações:
+- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas e siglas empresariais/fiscais preservadas em maiúsculas (ex: LTDA, S/A, ME, PIX). NUNCA retorne em caixa alta integral.
+- contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta.
+- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Siga ESTRITAMENTE estas formatações:
   (1) Salários/Trabalhistas: "{Tipo} {Nome Completo do Funcionário}".
   (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}".
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
@@ -109,7 +110,7 @@ com atenção:
                 "cnpj_cpf_fornecedor": types.Schema(type=types.Type.STRING, description="CNPJ ou CPF do fornecedor"),
                 "nome_fornecedor": types.Schema(
                     type=types.Type.STRING, 
-                    description="Razão Social ou Nome Fantasia. Quando funcionário/prestador PF, usar o nome completo."
+                    description="Razão Social ou Nome Fantasia. Quando funcionário/prestador PF, usar o nome completo. OBRIGATÓRIO: Title Case, NUNCA caixa alta."
                 ),
                 "numero_despesa": types.Schema(type=types.Type.STRING, description="Número da Nota Fiscal ou Recibo"),
                 "data_emissao": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
@@ -119,10 +120,10 @@ com atenção:
                     type=types.Type.STRING,
                     description="Valor efetivamente pago conforme comprovação de pagamento; NF apenas se não houver comprovação",
                 ),
-                "descricao": types.Schema(type=types.Type.STRING, description="Descrição dos serviços/produtos"),
+                "descricao": types.Schema(type=types.Type.STRING, description="Descrição dos serviços/produtos em Sentence Case. NUNCA caixa alta."),
                 "contexto_sintetizado": types.Schema(
                     type=types.Type.STRING,
-                    description="Definição contábil precisa do serviço/produto, preservando termos técnicos e núcleo da despesa",
+                    description="Definição contábil do serviço/produto, sem caixa alta",
                 ),
                 "chave_acesso": types.Schema(
                     type=types.Type.STRING,
@@ -216,11 +217,15 @@ com atenção:
                                         except Exception:
                                             pass
                             await asyncio.sleep(delay)
-                    elif e.code == 503:
+                    elif "503" in str(e):
                         delay = 30 + random.uniform(0, 30)
                         await asyncio.sleep(delay)
                     else:
-                        raise e
+                        # Para outros erros de rede (ex: SSL drop, httpx.ReadError), tenta mais uma vez
+                        if attempt < max_tentativas:
+                            await asyncio.sleep(2)
+                        else:
+                            raise e
                 else:
                     raise e
 
@@ -237,16 +242,18 @@ com atenção:
                 if len(parts) >= 2:
                     comp = f"{parts[1]}/{parts[0]}"
 
+        from src.utils.text_sanitizer import sanitize_nome_fornecedor, sanitize_descricao
+        
         dados_extraidos = DadosExtraidosDTO(
             cnpj_cpf_fornecedor=bruto.cnpj_cpf_fornecedor,
-            nome_fornecedor=bruto.nome_fornecedor,
+            nome_fornecedor=sanitize_nome_fornecedor(bruto.nome_fornecedor),
             numero_despesa=bruto.numero_despesa,
             data_emissao=bruto.data_emissao,
             data_vencimento=bruto.data_vencimento,
             data_pagamento=bruto.data_pagamento,
             valor_total=valor_processado,
-            descricao=bruto.descricao,
-            contexto_sintetizado=bruto.contexto_sintetizado,
+            descricao=sanitize_descricao(bruto.descricao),
+            contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado),
             chave_acesso=bruto.chave_acesso,
             competencia=comp,
         )
