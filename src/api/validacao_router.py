@@ -217,6 +217,8 @@ async def detalhe_despesa(despesa_id: str):
         condominio_id=doc.get("condominio_id"),
         chave_acesso=doc.get("chave_acesso"),
         competencia=doc.get("competencia"),
+        conta_despesa_id=doc.get("conta_despesa_id"),
+        fonte_pagadora_id=doc.get("fonte_pagadora_id"),
         criado_em=doc["criado_em"],
         extraido_em=doc.get("extraido_em"),
         erro_msg=doc.get("erro_msg"),
