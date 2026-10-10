@@ -42,7 +42,9 @@ class ContextoService:
                 prompt = (
                     f"Sintetize uma definicao inicial de contexto para a conta contabil descrita por '{conta_descricao}' "
                     f"baseada no seguinte historico/despesa: '{novo_descritivo}'. "
-                    f"Sintetize um texto explicativo da finalidade contabil, escopo da conta e exemplos tipicos de despesa. "
+                    f"Sintetize um texto explicativo da finalidade contabil e do escopo da conta. "
+                    f"REGRA CRITICA: Voce deve GENERALIZAR o conteudo. NUNCA inclua nomes proprios de funcionarios, numeros de documentos, pedidos, notas fiscais ou datas. "
+                    f"Abstraia dados especificos para termos corporativos (ex: de 'Fabiano Gomes' para 'colaboradores', de 'pedido 8927' para 'taxas operacionais'). "
                     f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o contexto sintetizado, sem introducoes."
                 )
                 resp = client.models.generate_content(
@@ -101,16 +103,20 @@ class ContextoService:
             # Se nao existir ou se for <= 0.85
             if contexto_atual:
                 prompt = (
-                    f"Incorpore os detalhes desta nova despesa/historico: '{novo_descritivo}' "
+                    f"Incorpore a NATUREZA CONTABIL desta nova despesa/historico: '{novo_descritivo}' "
                     f"ao contexto geral desta conta contabil: '{contexto_atual}'. "
-                    f"Sintetize um texto explicativo da finalidade contabil, escopo da conta e exemplos tipicos de despesa. "
+                    f"Sintetize um texto explicativo da finalidade e do escopo da conta. "
+                    f"REGRA CRITICA: Voce deve GENERALIZAR o conteudo. ESTRITAMENTE PROIBIDO incluir nomes proprios, CPFs, numeros de recibos/pedidos ou datas. "
+                    f"Substitua referencias especificas por categorias abrangentes (ex: de 'Mais Mobi' para 'fornecedores', de 'Ricardo Santana' para 'folha de pagamento'). "
                     f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o novo contexto consolidado, sem introducoes."
                 )
             else:
                 prompt = (
                     f"Sintetize uma definicao inicial de contexto para a conta contabil descrita por '{conta_descricao}' "
                     f"baseada no seguinte historico/despesa: '{novo_descritivo}'. "
-                    f"Sintetize um texto explicativo da finalidade contabil, escopo da conta e exemplos tipicos de despesa. "
+                    f"Sintetize um texto explicativo da finalidade contabil e do escopo da conta. "
+                    f"REGRA CRITICA: Voce deve GENERALIZAR o conteudo. NUNCA inclua nomes proprios de funcionarios, numeros de documentos, pedidos, notas fiscais ou datas. "
+                    f"Abstraia dados especificos para termos corporativos (ex: de 'Fabiano Gomes' para 'colaboradores', de 'pedido 8927' para 'taxas operacionais'). "
                     f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o contexto sintetizado, sem introducoes."
                 )
 
