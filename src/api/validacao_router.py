@@ -101,7 +101,8 @@ class ValidacaoResponse(BaseModel):
 
 @router.get("/despesas", response_model=list[dict])
 async def listar_despesas(
-    status: str = "extraido",   # filtro padrão: só os prontos pra validar
+    status: str = "extraido",
+    condominio_id: str | None = None,
     limit: int = 500,
 ):
     """
@@ -117,6 +118,9 @@ async def listar_despesas(
         .order("criado_em", desc=True)
         .limit(limit)
     )
+
+    if condominio_id:
+        query = query.eq("condominio_id", condominio_id)
 
     if status != "todos":
         if "," in status:
@@ -555,6 +559,7 @@ async def scan_qr_code(despesa_id: str):
         import logging
         logging.getLogger("validacao_router").error(f"Erro ao escanear QR Code: {e}")
         return ScanQrResponse(sucesso=False, mensagem=f"Erro ao processar imagem: {e}")
+
 
 
 
