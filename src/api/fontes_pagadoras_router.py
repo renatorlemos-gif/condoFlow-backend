@@ -89,7 +89,9 @@ class FontePagadoraUpdate(BaseModel):
 @router.patch("/{fonte_id}", response_model=FontePagadoraResponse)
 def update_fonte_pagadora(fonte_id: str, fonte: FontePagadoraUpdate):
     supabase = _get_supabase()
-    data = {k: v for k, v in fonte.dict().items() if v is not None}; if data.get("plano_conta_id") == "": data["plano_conta_id"] = None
+    data = {k: v for k, v in fonte.dict().items() if v is not None}
+    if data.get('plano_conta_id') == '':
+        data['plano_conta_id'] = None
     
     if data.get("tipo") == "CONTA_BANCARIA":
         # Validate that banco, agencia, conta are present if it's changing to CONTA_BANCARIA
