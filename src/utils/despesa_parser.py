@@ -93,16 +93,17 @@ com atenção:
 - valor_total_bruto: o VALOR TOTAL A PAGAR efetivamente desembolsado. Retorne EXATAMENTE como impresso (ex: "105.900,00"), sem converter ou fazer contas. NÃO confunda com valor unitário, total de item, "valor total dos produtos", bases/impostos ICMS/IPI/ISS (aplicável quando cair no fallback da NF).
 - Datas sempre no formato YYYY-MM-DD.
 - Campos que não aparecerem devem ficar nulos, não invente valores.
-- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas e siglas empresariais/fiscais preservadas em maiúsculas (ex: LTDA, S/A, ME, PIX). NUNCA retorne em caixa alta integral.
+- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". NUNCA retorne em caixa alta integral. Qualquer nome deve vir com acentuação correta pt-BR ("ç", "~", etc) mesmo que o arquivo original não os tenha.
+- numero_despesa: Numeração de documentos deve constar SOMENTE NÚMEROS. Remova pontos, traços ou barras, deixando somente números sem espaços. Se a despesa for conta de consumo (agua, luz, gás, etc) sempre busque o número da NF e não o da fatura. null se não existir.
 - contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta.
-- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Siga ESTRITAMENTE estas formatações:
+- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras corretamente usando padrão pt-BR ("ç", "~", etc) mesmo se a fonte não os tiver. Siga ESTRITAMENTE estas formatações:
   (1) Salários/Trabalhistas: "{Tipo} {Nome Completo do Funcionário}".
-  (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}".
+  (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}". IMPORTANTE: O tipo de documento precisa ser coerente (não use NF para serviço, nem NFSe para produtos). Se aparecer a classificação "Danfe" nas fontes, esse tipo prevalece e deve compor a descrição. Se não houver nenhum documento que permita classificação de tipo, retorne com "Doc nº" e o número obtido (se houver).
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
   (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
 - chave_acesso: Procurar em TODAS as páginas, apenas os 44 ou 50 dígitos numéricos. null se não existir.
 - REGRA 9 (COMPETÊNCIA): Formato MM/YYYY. Faça uma BUSCA EXAUSTIVA por menções expressas da data/período de execução do serviço ou compra no corpo do texto (ex: "ref. ao mês de", "competência"). Apenas se não encontrar, use a data de emissão. E como último recurso absoluto, a data de pagamento. NUNCA DEVE FICAR NULA.
-- REGRA 10 (FORNECEDOR PF/TRABALHISTA E CONDOMÍNIO): O fornecedor é sempre quem prestou o serviço/vendeu o produto. Em recibos de salários, férias, adiantamentos ou prestadores pessoa física, o 'nome_fornecedor' é SEMPRE o nome completo da pessoa física (funcionário/prestador) e o CPF vai em 'cnpj_cpf_fornecedor'. O Condomínio pagador É TERMINANTEMENTE PROIBIDO de constar como fornecedor. Se não houver número fiscal explícito, 'numero_despesa' deve ser null."""
+- REGRA 10 (FORNECEDOR PF/TRABALHISTA E CONDOMÍNIO): O fornecedor é sempre quem prestou o serviço/vendeu o produto. Em recibos de salários, férias, adiantamentos ou prestadores pessoa física, o 'nome_fornecedor' é SEMPRE o nome completo da pessoa física (funcionário/prestador) e o CPF vai em 'cnpj_cpf_fornecedor'. O Condomínio pagador é TERMINANTEMENTE PROIBIDO de constar como fornecedor. Se não houver número fiscal explícito, 'numero_despesa' deve ser null."""
 
         response_schema = types.Schema(
             type=types.Type.OBJECT,

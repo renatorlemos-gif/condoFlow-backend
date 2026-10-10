@@ -1,6 +1,6 @@
 import re
 
-ACRONYMS = {"LTDA", "S/A", "SA", "ME", "EPP", "EIRELI", "SABESP", "PIX", "NF", "DARF", "CNPJ", "CPF", "MEI", "TED", "DOC"}
+ACRONYMS = {"S/A", "SA", "ME", "EPP", "EIRELI", "SABESP", "PIX", "NF", "DARF", "CNPJ", "CPF", "MEI", "TED", "DOC"}
 PREPOSITIONS = {"de", "da", "do", "dos", "das", "em", "para", "com", "no", "na", "nos", "nas", "e"}
 
 def _clean_word_for_check(w: str) -> str:
