@@ -463,6 +463,50 @@ def _aprender_com_validacao(admin_id: int | str, conta_despesa_id: str, contexto
         logger.error(f"Erro no aprendizado contínuo: {e}")
 
 
+@router.delete("/despesas/{despesa_id}")
+async def deletar_despesa(despesa_id: str):
+    """
+    Exclui permanentemente (hard delete) uma despesa:
+    1. Desfaz conciliações associadas (se houver).
+    2. Apaga arquivo do Supabase Storage.
+    3. Remove o registro da tabela 'despesas'.
+    """
+    supabase = _get_supabase()
+
+    # Busca os dados da despesa
+    res = supabase.table("despesas").select("id, storage_path, bucket").eq("id", despesa_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Despesa não encontrada.")
+
+    despesa = res.data[0]
+    storage_path = despesa.get("storage_path")
+    bucket = despesa.get("bucket") or os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "integre")
+
+    # 1. Desfaz conciliações associadas
+    try:
+        supabase.table("conciliacoes").delete().eq("despesa_id", despesa_id).execute()
+    except Exception as e:
+        import logging
+        logging.getLogger("validacao_router").warning(f"Erro ao deletar conciliacoes da despesa {despesa_id}: {e}")
+
+    # 2. Deleta arquivos do Supabase Storage
+    if storage_path:
+        try:
+            paths_to_delete = [storage_path] if isinstance(storage_path, str) else list(storage_path)
+            supabase.storage.from_(bucket).remove(paths_to_delete)
+        except Exception as e:
+            import logging
+            logging.getLogger("validacao_router").warning(f"Erro ao remover storage_path {storage_path} do bucket {bucket}: {e}")
+
+    # 3. Deleta da tabela 'despesas'
+    try:
+        supabase.table("despesas").delete().eq("id", despesa_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao excluir despesa do banco: {e}")
+
+    return {"ok": True, "id": despesa_id, "mensagem": "Despesa excluída permanentemente."}
+
+
 class ScanQrResponse(BaseModel):
     sucesso: bool
     url: str | None = None
