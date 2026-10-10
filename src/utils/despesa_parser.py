@@ -97,7 +97,7 @@ com atenção:
 - numero_despesa: Numeração de documentos deve constar SOMENTE NÚMEROS. Remova pontos, traços ou barras, deixando somente números sem espaços. Se a despesa for conta de consumo (agua, luz, gás, etc) sempre busque o número da NF e não o da fatura. null se não existir.
 - contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta.
 - descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras corretamente usando padrão pt-BR ("ç", "~", etc) mesmo se a fonte não os tiver. Siga ESTRITAMENTE estas formatações:
-  (1) Salários/Trabalhistas: "{Tipo} {Nome Completo do Funcionário}".
+  (1) Salários/Trabalhistas (folha de pagamento, Férias, 13º Salário): a descrição DEVE ser o tipo de despesa seguido do nome completo do funcionário. Exemplo: "Salário Renato Rodrigues Lemos".
   (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}". IMPORTANTE: O tipo de documento precisa ser coerente (não use NF para serviço, nem NFSe para produtos). Se aparecer a classificação "Danfe" nas fontes, esse tipo prevalece e deve compor a descrição. Se não houver nenhum documento que permita classificação de tipo, retorne com "Doc nº" e o número obtido (se houver).
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
   (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
