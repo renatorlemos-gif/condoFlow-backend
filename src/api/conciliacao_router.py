@@ -182,11 +182,7 @@ async def listar_transacoes(
 
     query = supabase.table("transacoes_extrato").select("*").order("data_transacao", desc=True).limit(limit)
     if condominio_id:
-        fontes = supabase.table("fontes_pagadoras").select("id").eq("condominio_id", condominio_id).execute().data or []
-        if fontes:
-            query = query.in_("conta_bancaria_id", [f["id"] for f in fontes])
-        else:
-            return []
+        query = query.eq("condominio_id", condominio_id)
     if banco:
         query = query.eq("banco", banco)
     if grupos:
@@ -551,6 +547,7 @@ async def sugestoes_despesa(
         ),
         total_candidatas=len(candidatas)
     )
+
 
 
 
