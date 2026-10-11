@@ -281,6 +281,8 @@ async def listar_transacoes(
             # If there's multiple conciliations for this transaction, it's also a lote
             if len(concs) > 1:
                 is_lote = True
+                if not lote_id:
+                    lote_id = trans["id"]
                 
             trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco"]}
             trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
@@ -388,8 +390,8 @@ async def conciliar(payload: ConciliarPayload):
 
     # Criação do Lote / Associação N x N
     is_lote = len(payload.transacoes_ids) > 1 or len(payload.despesas_ids) > 1
-    lote_id = f"lote_{uuid.uuid4().hex[:8]}"
-    status_str = lote_id if is_lote else payload.status
+    # O banco de dados PostgreSQL possui check constraint que exige status IN ('manual', 'automatica')
+    status_db = "automatica" if payload.status == "automatica" else "manual"
 
     inserts = []
     for t_id in payload.transacoes_ids:
@@ -397,7 +399,7 @@ async def conciliar(payload: ConciliarPayload):
             inserts.append({
                 "transacao_id": t_id,
                 "despesa_id": d_id,
-                "status": status_str,
+                "status": status_db,
                 "conciliado_em": datetime.now(timezone.utc).isoformat(),
                 "conciliado_por": "sistema" if payload.status == "automatica" else "usuaria",
             })
@@ -418,41 +420,47 @@ async def conciliar(payload: ConciliarPayload):
 
     supabase.table("despesas").update(update_doc).in_("id", payload.despesas_ids).execute()
 
-    return ConciliarResponse(ok=True, conciliacao_id=lote_id if is_lote else conciliacao_id_ref)
+    lote_retorno = payload.transacoes_ids[0] if len(payload.transacoes_ids) == 1 else conciliacao_id_ref
+    return ConciliarResponse(ok=True, conciliacao_id=lote_retorno if is_lote else conciliacao_id_ref)
 
 
 @router.delete("/{conciliacao_id}")
 async def desfazer_conciliacao(conciliacao_id: str):
     supabase = _get_supabase()
 
-    # Verifica se está passando um ID de lote (prefixado com lote_)
-    if conciliacao_id.startswith("lote_"):
-        # Desfaz todo o lote
-        conc_lote = supabase.table("conciliacoes").select("despesa_id").eq("status", conciliacao_id).execute().data or []
-        if not conc_lote:
-            raise HTTPException(status_code=404, detail="Lote de conciliação não encontrado.")
-            
-        doc_ids = list({c["despesa_id"] for c in conc_lote})
-        
-        supabase.table("conciliacoes").delete().eq("status", conciliacao_id).execute()
+    # 1. Verifica se foi passado o ID de uma transação diretamente (lote 1xN associado a essa transação)
+    concs_tx = supabase.table("conciliacoes").select("despesa_id").eq("transacao_id", conciliacao_id).execute().data or []
+    if concs_tx:
+        doc_ids = list({c["despesa_id"] for c in concs_tx})
+        supabase.table("conciliacoes").delete().eq("transacao_id", conciliacao_id).execute()
         supabase.table("despesas").update({"status": "validado"}).in_("id", doc_ids).execute()
         return {"ok": True, "lote_desfeito": True}
 
-    # Desfaz conciliação individual
-    conc = supabase.table("conciliacoes").select("despesa_id, status, transacao_id").eq("id", conciliacao_id).execute()
+    # 2. Verifica se está passando um ID de lote legado (prefixado com lote_)
+    if conciliacao_id.startswith("lote_"):
+        conc_lote = supabase.table("conciliacoes").select("despesa_id").eq("status", conciliacao_id).execute().data or []
+        if conc_lote:
+            doc_ids = list({c["despesa_id"] for c in conc_lote})
+            supabase.table("conciliacoes").delete().eq("status", conciliacao_id).execute()
+            supabase.table("despesas").update({"status": "validado"}).in_("id", doc_ids).execute()
+            return {"ok": True, "lote_desfeito": True}
+
+    # 3. Desfaz conciliação por ID direto da tabela conciliacoes
+    conc = supabase.table("conciliacoes").select("id, despesa_id, status, transacao_id").eq("id", conciliacao_id).execute()
     if not conc.data:
         raise HTTPException(status_code=404, detail="Conciliação não encontrada.")
 
     registro = conc.data[0]
+    t_id = registro.get("transacao_id")
     
-    # Se na verdade era parte de um lote via ID direto, vamos estornar o lote todo para evitar inconsistências
-    if str(registro.get("status", "")).startswith("lote_"):
-        lote_str = registro["status"]
-        conc_lote = supabase.table("conciliacoes").select("despesa_id").eq("status", lote_str).execute().data or []
-        doc_ids = list({c["despesa_id"] for c in conc_lote})
-        supabase.table("conciliacoes").delete().eq("status", lote_str).execute()
-        supabase.table("despesas").update({"status": "validado"}).in_("id", doc_ids).execute()
-        return {"ok": True, "lote_desfeito": True, "obs": "A conciliação fazia parte de um lote, que foi totalmente desfeito."}
+    # Se na verdade a transação tinha múltiplas conciliações associadas (lote), estorna todo o lote da transação
+    if t_id:
+        irmas = supabase.table("conciliacoes").select("despesa_id").eq("transacao_id", t_id).execute().data or []
+        if len(irmas) > 1:
+            doc_ids = list({c["despesa_id"] for c in irmas})
+            supabase.table("conciliacoes").delete().eq("transacao_id", t_id).execute()
+            supabase.table("despesas").update({"status": "validado"}).in_("id", doc_ids).execute()
+            return {"ok": True, "lote_desfeito": True, "obs": "A conciliação fazia parte de um lote, que foi totalmente desfeito."}
 
     # Estorno normal 1x1
     despesa_id = registro["despesa_id"]

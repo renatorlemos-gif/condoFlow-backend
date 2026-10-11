@@ -14,7 +14,6 @@ SPECIAL_DOC_TYPES = {
     "cte": "CTe",
     "ct-e": "CT-e",
     "cupom": "Cupom",
-    "recibo": "Recibo",
 }
 
 PREPOSITIONS = {"de", "da", "do", "dos", "das", "em", "para", "com", "no", "na", "nos", "nas", "e"}
@@ -339,31 +338,49 @@ def limpar_documento_sem_numero(text: str, numero_doc: str | None = None) -> str
     if not text:
         return text
 
-    # 1. Remove qualquer "null", "none", "undefined" solto ou acompanhado de doc
+    # 1. Normaliza menção a conf. recibo.
+    text = re.sub(r'\bconf\.?\s*recibo\.?', 'conf. recibo.', text, flags=re.IGNORECASE)
+
+    # 2. Remove qualquer "null", "none", "undefined" solto ou acompanhado de doc
     # Ex: "DOC nº null", "Doc nº null", "Danfe null", "NFSe null"
-    text = re.sub(r'\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?|NFSe|NFS-e|Danfe|DANFE|NFe|NF|Recibo)\s+(null|none|undefined|\-)\b', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?|NFSe|NFS-e|Danfe|DANFE|NFe|NF)\s+(null|none|undefined|\-)\b', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+\b(null|none|undefined)\b', '', text, flags=re.IGNORECASE)
 
-    # 2. Se o documento não tem número (numero_doc é nulo ou string vazia),
-    # ou se a string termina com um tipo de documento solto sem dígitos depois:
+    # 3. Se o documento não tem número (numero_doc é nulo ou string vazia),
+    # ou se a string termina com um tipo de documento solto sem dígitos depois (exceto se for conf. recibo.):
     tem_numero = bool(numero_doc and str(numero_doc).strip().lower() not in ("null", "none", "undefined", ""))
     
     # Remove tipo solto no final da descrição: "... Ltda Danfe", "... Ltda Doc nº", "... Ltda NFSe"
-    text = re.sub(r'\s+\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?|NFSe|NFS-e|Danfe|DANFE|NFe|NF|Recibo)\s*$', '', text, flags=re.IGNORECASE)
+    # Não remove se for "conf. recibo."
+    text = re.sub(r'\s+(?<!conf\.\s)(?<!conf\s)\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?|NFSe|NFS-e|Danfe|DANFE|NFe|NF)\s*$', '', text, flags=re.IGNORECASE)
 
     if not tem_numero:
         # Se não há número de documento nenhum, remove qualquer ocorrência de "Doc nº" solto no texto
         text = re.sub(r'\s*\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?)\b', '', text, flags=re.IGNORECASE)
 
-    # 3. Garante formatação correta "Doc nº" quando acompanhado de número
+    # 4. Garante formatação correta "Doc nº" quando acompanhado de número
     text = re.sub(r'\bDOC\s*nº', 'Doc nº', text)
     text = re.sub(r'\bdoc\s*nº', 'Doc nº', text)
     text = re.sub(r'\bDoc\s*no\b', 'Doc nº', text)
     text = re.sub(r'\bDOC\s*no\b', 'Doc nº', text)
 
+    # Garante conf. recibo. em minúsculas
+    text = re.sub(r'\bconf\.?\s*recibo\.?', 'conf. recibo.', text, flags=re.IGNORECASE)
+
     # Limpa espaços múltiplos
     text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
+
+
+def limitar_tamanho_80(text: str) -> str:
+    """Garante que a descrição não exceda o limite rígido de 80 caracteres."""
+    if not text or len(text) <= 80:
+        return text
+    truncado = text[:80]
+    last_space = truncado.rfind(" ")
+    if last_space > 40:
+        truncado = truncado[:last_space]
+    return truncado.strip()
 
 
 def sanitize_descricao(text: str | None, numero_doc: str | None = None) -> str | None:
@@ -375,6 +392,7 @@ def sanitize_descricao(text: str | None, numero_doc: str | None = None) -> str |
     - Garante acentuação e cedilha PT-BR (Comércio, Gestão, Serviços, etc.)
     - Formata 'Ltda' corretamente
     - Remove tipo de documento solto (Danfe, NFSe, Doc nº) se não houver numeração
+    - Garante limite máximo de 80 caracteres
     """
     if not text or not str(text).strip():
         return text
@@ -407,5 +425,6 @@ def sanitize_descricao(text: str | None, numero_doc: str | None = None) -> str |
 
     final_text = " ".join(result)
     # Limpeza final para garantir que Doc nº ou tipos soltos não fiquem sem número
-    return limpar_documento_sem_numero(final_text, numero_doc=numero_doc)
+    limpo = limpar_documento_sem_numero(final_text, numero_doc=numero_doc)
+    return limitar_tamanho_80(limpo)
 

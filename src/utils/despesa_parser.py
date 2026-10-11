@@ -91,19 +91,23 @@ com atenção:
 
 - REGRA 1 (PREVALÊNCIA DE PAGAMENTO - REGIME DE CAIXA): O condomínio opera sob Regime de Caixa. QUALQUER comprovação de pagamento (Pix, TED, recibo assinado, boleto quitado, CUPOM FISCAL) PREVALECE SEMPRE sobre a Nota Fiscal para data ('data_pagamento') e valor ('valor_total_bruto'). A Nota Fiscal só é usada para data e valor em último caso absoluto, quando não houver NENHUMA comprovação de pagamento no arquivo.
 - valor_total_bruto: o VALOR TOTAL A PAGAR efetivamente desembolsado. Retorne EXATAMENTE como impresso (ex: "105.900,00"), sem converter ou fazer contas. NÃO confunda com valor unitário, total de item, "valor total dos produtos", bases/impostos ICMS/IPI/ISS (aplicável quando cair no fallback da NF).
+  REGRA MANDATÓRIA PARA DEMONSTRATIVO DE PAGAMENTO / HOLERITE / RECIBO SALARIAL: Em documentos do tipo demonstrativo de pagamento, folha de pagamento, holerite ou recibo (Salários, Adiantamentos, Férias, 13º Salário, Rescisões), o valor procurado DEVE SER OBRIGATORIAMENTE O "VALOR LÍQUIDO" (o valor líquido a receber pelo colaborador). NUNCA utilize o total bruto de proventos, total de descontos ou bases de INSS/FGTS.
 - Datas sempre no formato YYYY-MM-DD.
 - Campos que não aparecerem devem ficar nulos, não invente valores.
 - REGRA CRÍTICA DE ACENTUAÇÃO E ORTOGRAFIA PT-BR: Documentos fiscais e recibos frequentemente omitem acentos e cedilhas por estarem em caixa alta (ex: COMERCIO, GESTAO, SERVICOS, ELETRICA, MANUTENCAO, CONSTRUCAO). Você DEVE OBRIGATORIAMENTE corrigir a grafia de TODAS as palavras para a norma culta com a acentuação correta do Português do Brasil: "Comércio", "Gestão", "Serviços", "Elétrica", "Manutenção", "Construção", "Higienização", "Água", "Gás", etc. NUNCA deixe palavras sem acento ou cedilha em 'nome_fornecedor', 'descricao' e 'contexto_sintetizado'.
 - nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". NUNCA retorne em caixa alta integral. Qualquer nome DEVE vir com acentuação correta pt-BR ("Comércio", "Gestão", "Serviços", "Elétrica", etc) mesmo que o arquivo original não os tenha.
 - numero_despesa: Numeração de documentos deve constar SOMENTE NÚMEROS. Remova pontos, traços ou barras, deixando somente números sem espaços. Se a despesa for conta de consumo (agua, luz, gás, etc) sempre busque o número da NF e não o da fatura. null se não existir.
 - contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta e DEVE ter acentuação correta pt-BR.
-- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras OBRIGATORIAMENTE usando padrão pt-BR ("ç", "~", acentos agudos e circunflexos, ex: "Comércio", "Gestão", "Serviços") mesmo se a fonte não os tiver. Siga ESTRITAMENTE estas formatações:
-  (1) Salários/Trabalhistas (folha de pagamento, Férias, 13º Salário): a descrição DEVE ser o tipo de despesa seguido do nome completo do funcionário. Exemplo: "Salário Renato Rodrigues Lemos".
+- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras OBRIGATORIAMENTE usando padrão pt-BR ("ç", "~", acentos agudos e circunflexos, ex: "Comércio", "Gestão", "Serviços") mesmo se a fonte não os tiver.
+  REGRA CRÍTICA DE LIMITE (MÁXIMO 80 CARACTERES): O comprimento total da 'descricao' NUNCA PODE ULTRAPASSAR 80 CARACTERES (len <= 80). Sempre planeje o texto com esta premissa. Se o texto ameaçar ultrapassar 80 caracteres, você DEVE ABREVIAR o nome do fornecedor (mantendo o núcleo identificável) para caber estritamente dentro do limite de 80 caracteres.
+  Siga ESTRITAMENTE estas formatações:
+  (1) Salários/Trabalhistas (folha de pagamento, Salários, Adiantamentos, Férias, 13º Salário): a descrição DEVE ser o tipo de despesa seguido do nome completo do funcionário. Exemplos: "Salário Renato Rodrigues Lemos", "Adiantamento Renato Rodrigues Lemos", "Férias Carlos Santana", "13º Salário Fabiana de Oliveira".
   (2) Fiscais/PJ:
       - SE HOUVER número de documento: "{Fornecedor} {Tipo} {Número}". O tipo de documento precisa ser coerente (Danfe para compras/produtos, NFSe para serviços, Doc nº para recibos). Usar estritamente as grafias "NFSe", "Danfe", "NFe", "Doc nº" (NUNCA "DOC nº" em maiúsculo).
       - SE NÃO HOUVER número de documento (numero_despesa for null): retorne APENAS o nome do fornecedor: "{Fornecedor}". REGRA MANDATÓRIA: O tipo de documento (Doc nº, NF, NFSe, Danfe) SÓ DEVE APARECER se acompanhado de numeração obtida no documento. Se não houver número, o tipo NÃO deve constar solto de forma alguma. NUNCA escreva a palavra "null" ou "Doc nº" solto.
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
-  (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
+  (4) Recibos: Quando a despesa for referente a "Recibo" (recibo de pagamento, recibo de prestação de serviços ou comprovante avulso), ao FINAL da descrição sintetizada DEVERÁ CONSTAR OBRIGATORIAMENTE: "conf. recibo." (ex: "{Nome} ref. {serviço} conf. recibo." ou "{Fornecedor} conf. recibo."), respeitando sempre o limite de 80 caracteres.
+  (5) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
 - chave_acesso: Procurar em TODAS as páginas, apenas os 44 ou 50 dígitos numéricos. null se não existir.
 - REGRA 9 (COMPETÊNCIA): Formato MM/YYYY. Faça uma BUSCA EXAUSTIVA por menções expressas da data/período de execução do serviço ou compra no corpo do texto (ex: "ref. ao mês de", "competência"). Apenas se não encontrar, use a data de emissão. E como último recurso absoluto, a data de pagamento. NUNCA DEVE FICAR NULA.
 - REGRA 10 (FORNECEDOR PF/TRABALHISTA E CONDOMÍNIO): O fornecedor é sempre quem prestou o serviço/vendeu o produto. Em recibos de salários, férias, adiantamentos ou prestadores pessoa física, o 'nome_fornecedor' é SEMPRE o nome completo da pessoa física (funcionário/prestador) e o CPF vai em 'cnpj_cpf_fornecedor'. O Condomínio pagador é TERMINANTEMENTE PROIBIDO de constar como fornecedor. Se não houver número fiscal explícito, 'numero_despesa' deve ser null."""
@@ -122,11 +126,11 @@ com atenção:
                 "data_pagamento": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
                 "valor_total_bruto": types.Schema(
                     type=types.Type.STRING,
-                    description="Valor efetivamente pago conforme comprovação de pagamento; NF apenas se não houver comprovação",
+                    description="Valor pago; em demonstrativos de pagamento de salários/adiantamento/férias, usar SEMPRE o Valor Líquido.",
                 ),
                 "descricao": types.Schema(
                     type=types.Type.STRING, 
-                    description="Descrição dos serviços/produtos em Sentence Case. NUNCA caixa alta. OBRIGATÓRIO: o tipo de documento (Doc nº, NFSe, Danfe) SÓ PODE aparecer se acompanhado de número real (ex: 'Fornecedor Danfe 123'). Se não houver número, retorne APENAS o fornecedor (ex: 'Fornecedor Ltda'). NUNCA retorne a palavra 'null' ou tipos soltos."
+                    description="Descrição em Sentence Case com no MÁXIMO 80 caracteres (abrevie o fornecedor se necessário). Salários/Adiantamento/Férias: 'Tipo Nome'. Recibos: finalizar com 'conf. recibo.'. Documentos fiscais: tipo só se houver número. NUNCA usar 'null'."
                 ),
                 "contexto_sintetizado": types.Schema(
                     type=types.Type.STRING,
