@@ -2,10 +2,12 @@ import re
 
 ACRONYMS = {
     "S/A", "SA", "ME", "EPP", "EIRELI", "SABESP", "PIX", "NF", "DARF",
-    "CNPJ", "CPF", "MEI", "TED", "DOC", "FGTS", "INSS", "GPS", "IRRF", "ISS"
+    "CNPJ", "CPF", "MEI", "TED", "FGTS", "INSS", "GPS", "IRRF", "ISS"
 }
 
 SPECIAL_DOC_TYPES = {
+    "doc": "Doc",
+    "doc.": "Doc.",
     "nfse": "NFSe",
     "nfe": "NFe",
     "danfe": "Danfe",
@@ -329,7 +331,42 @@ def sanitize_nome_fornecedor(text: str | None) -> str | None:
             
     return " ".join(result)
 
-def sanitize_descricao(text: str | None) -> str | None:
+def limpar_documento_sem_numero(text: str, numero_doc: str | None = None) -> str:
+    """
+    Remove menções a tipo de documento solto (sem numeração associada) e resíduos de 'null'.
+    Garante que 'Doc nº' fique em Title Case e nunca 'DOC nº'.
+    """
+    if not text:
+        return text
+
+    # 1. Remove qualquer "null", "none", "undefined" solto ou acompanhado de doc
+    # Ex: "DOC nº null", "Doc nº null", "Danfe null", "NFSe null"
+    text = re.sub(r'\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?|NFSe|NFS-e|Danfe|DANFE|NFe|NF|Recibo)\s+(null|none|undefined|\-)\b', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\s+\b(null|none|undefined)\b', '', text, flags=re.IGNORECASE)
+
+    # 2. Se o documento não tem número (numero_doc é nulo ou string vazia),
+    # ou se a string termina com um tipo de documento solto sem dígitos depois:
+    tem_numero = bool(numero_doc and str(numero_doc).strip().lower() not in ("null", "none", "undefined", ""))
+    
+    # Remove tipo solto no final da descrição: "... Ltda Danfe", "... Ltda Doc nº", "... Ltda NFSe"
+    text = re.sub(r'\s+\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?|NFSe|NFS-e|Danfe|DANFE|NFe|NF|Recibo)\s*$', '', text, flags=re.IGNORECASE)
+
+    if not tem_numero:
+        # Se não há número de documento nenhum, remove qualquer ocorrência de "Doc nº" solto no texto
+        text = re.sub(r'\s*\b(DOC\s*n[ºo]?|Doc\s*n[ºo]?)\b', '', text, flags=re.IGNORECASE)
+
+    # 3. Garante formatação correta "Doc nº" quando acompanhado de número
+    text = re.sub(r'\bDOC\s*nº', 'Doc nº', text)
+    text = re.sub(r'\bdoc\s*nº', 'Doc nº', text)
+    text = re.sub(r'\bDoc\s*no\b', 'Doc nº', text)
+    text = re.sub(r'\bDOC\s*no\b', 'Doc nº', text)
+
+    # Limpa espaços múltiplos
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip()
+
+
+def sanitize_descricao(text: str | None, numero_doc: str | None = None) -> str | None:
     """
     Higieniza a descrição da despesa:
     - Sentence Case geral (primeira palavra maiúscula)
@@ -337,10 +374,17 @@ def sanitize_descricao(text: str | None) -> str | None:
     - Converte 'Danfe' e 'NFSe' adequadamente
     - Garante acentuação e cedilha PT-BR (Comércio, Gestão, Serviços, etc.)
     - Formata 'Ltda' corretamente
+    - Remove tipo de documento solto (Danfe, NFSe, Doc nº) se não houver numeração
     """
     if not text or not str(text).strip():
         return text
     text_str = str(text).strip()
+
+    # Limpeza preliminar de null / tipos soltos
+    text_str = limpar_documento_sem_numero(text_str, numero_doc=numero_doc)
+    if not text_str:
+        return text_str
+
     is_all_caps = text_str.isupper()
 
     words = text_str.split()
@@ -361,4 +405,7 @@ def sanitize_descricao(text: str | None) -> str | None:
                 palavra_ajustada = _ajustar_palavra(w, forcar_title=(clean_w[0].isupper() if clean_w else False), manter_siglas=True)
                 result.append(palavra_ajustada)
 
-    return " ".join(result)
+    final_text = " ".join(result)
+    # Limpeza final para garantir que Doc nº ou tipos soltos não fiquem sem número
+    return limpar_documento_sem_numero(final_text, numero_doc=numero_doc)
+

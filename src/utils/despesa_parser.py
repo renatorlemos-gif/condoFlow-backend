@@ -99,7 +99,9 @@ com atenção:
 - contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta e DEVE ter acentuação correta pt-BR.
 - descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras OBRIGATORIAMENTE usando padrão pt-BR ("ç", "~", acentos agudos e circunflexos, ex: "Comércio", "Gestão", "Serviços") mesmo se a fonte não os tiver. Siga ESTRITAMENTE estas formatações:
   (1) Salários/Trabalhistas (folha de pagamento, Férias, 13º Salário): a descrição DEVE ser o tipo de despesa seguido do nome completo do funcionário. Exemplo: "Salário Renato Rodrigues Lemos".
-  (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}". IMPORTANTE: O tipo de documento precisa ser coerente (não use NF para serviço, nem NFSe para produtos). Se aparecer a classificação "Danfe" nas fontes, esse tipo prevalece e deve compor a descrição. Usar estritamente as grafias "NFSe", "Danfe", "NFe" (NUNCA "nfse" minúsculo). Se não houver nenhum documento que permita classificação de tipo, retorne com "Doc nº" e o número obtido (se houver).
+  (2) Fiscais/PJ:
+      - SE HOUVER número de documento: "{Fornecedor} {Tipo} {Número}". O tipo de documento precisa ser coerente (Danfe para compras/produtos, NFSe para serviços, Doc nº para recibos). Usar estritamente as grafias "NFSe", "Danfe", "NFe", "Doc nº" (NUNCA "DOC nº" em maiúsculo).
+      - SE NÃO HOUVER número de documento (numero_despesa for null): retorne APENAS o nome do fornecedor: "{Fornecedor}". REGRA MANDATÓRIA: O tipo de documento (Doc nº, NF, NFSe, Danfe) SÓ DEVE APARECER se acompanhado de numeração obtida no documento. Se não houver número, o tipo NÃO deve constar solto de forma alguma. NUNCA escreva a palavra "null" ou "Doc nº" solto.
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
   (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
 - chave_acesso: Procurar em TODAS as páginas, apenas os 44 ou 50 dígitos numéricos. null se não existir.
@@ -124,7 +126,7 @@ com atenção:
                 ),
                 "descricao": types.Schema(
                     type=types.Type.STRING, 
-                    description="Descrição dos serviços/produtos em Sentence Case. NUNCA caixa alta. OBRIGATÓRIO aplicar acentuação gráfica pt-BR (ex: Comércio, Gestão, Serviços) e tipos corretos (NFSe, Danfe)."
+                    description="Descrição dos serviços/produtos em Sentence Case. NUNCA caixa alta. OBRIGATÓRIO: o tipo de documento (Doc nº, NFSe, Danfe) SÓ PODE aparecer se acompanhado de número real (ex: 'Fornecedor Danfe 123'). Se não houver número, retorne APENAS o fornecedor (ex: 'Fornecedor Ltda'). NUNCA retorne a palavra 'null' ou tipos soltos."
                 ),
                 "contexto_sintetizado": types.Schema(
                     type=types.Type.STRING,
@@ -257,8 +259,8 @@ com atenção:
             data_vencimento=bruto.data_vencimento,
             data_pagamento=bruto.data_pagamento,
             valor_total=valor_processado,
-            descricao=sanitize_descricao(bruto.descricao),
-            contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado),
+            descricao=sanitize_descricao(bruto.descricao, numero_doc=bruto.numero_despesa),
+            contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado, numero_doc=bruto.numero_despesa),
             chave_acesso=bruto.chave_acesso,
             competencia=comp,
         )
