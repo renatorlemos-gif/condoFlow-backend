@@ -93,12 +93,13 @@ com atenção:
 - valor_total_bruto: o VALOR TOTAL A PAGAR efetivamente desembolsado. Retorne EXATAMENTE como impresso (ex: "105.900,00"), sem converter ou fazer contas. NÃO confunda com valor unitário, total de item, "valor total dos produtos", bases/impostos ICMS/IPI/ISS (aplicável quando cair no fallback da NF).
 - Datas sempre no formato YYYY-MM-DD.
 - Campos que não aparecerem devem ficar nulos, não invente valores.
-- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". NUNCA retorne em caixa alta integral. Qualquer nome deve vir com acentuação correta pt-BR ("ç", "~", etc) mesmo que o arquivo original não os tenha.
+- REGRA CRÍTICA DE ACENTUAÇÃO E ORTOGRAFIA PT-BR: Documentos fiscais e recibos frequentemente omitem acentos e cedilhas por estarem em caixa alta (ex: COMERCIO, GESTAO, SERVICOS, ELETRICA, MANUTENCAO, CONSTRUCAO). Você DEVE OBRIGATORIAMENTE corrigir a grafia de TODAS as palavras para a norma culta com a acentuação correta do Português do Brasil: "Comércio", "Gestão", "Serviços", "Elétrica", "Manutenção", "Construção", "Higienização", "Água", "Gás", etc. NUNCA deixe palavras sem acento ou cedilha em 'nome_fornecedor', 'descricao' e 'contexto_sintetizado'.
+- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". NUNCA retorne em caixa alta integral. Qualquer nome DEVE vir com acentuação correta pt-BR ("Comércio", "Gestão", "Serviços", "Elétrica", etc) mesmo que o arquivo original não os tenha.
 - numero_despesa: Numeração de documentos deve constar SOMENTE NÚMEROS. Remova pontos, traços ou barras, deixando somente números sem espaços. Se a despesa for conta de consumo (agua, luz, gás, etc) sempre busque o número da NF e não o da fatura. null se não existir.
-- contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta.
-- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras corretamente usando padrão pt-BR ("ç", "~", etc) mesmo se a fonte não os tiver. Siga ESTRITAMENTE estas formatações:
+- contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta e DEVE ter acentuação correta pt-BR.
+- descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras OBRIGATORIAMENTE usando padrão pt-BR ("ç", "~", acentos agudos e circunflexos, ex: "Comércio", "Gestão", "Serviços") mesmo se a fonte não os tiver. Siga ESTRITAMENTE estas formatações:
   (1) Salários/Trabalhistas (folha de pagamento, Férias, 13º Salário): a descrição DEVE ser o tipo de despesa seguido do nome completo do funcionário. Exemplo: "Salário Renato Rodrigues Lemos".
-  (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}". IMPORTANTE: O tipo de documento precisa ser coerente (não use NF para serviço, nem NFSe para produtos). Se aparecer a classificação "Danfe" nas fontes, esse tipo prevalece e deve compor a descrição. Se não houver nenhum documento que permita classificação de tipo, retorne com "Doc nº" e o número obtido (se houver).
+  (2) Fiscais/PJ: "{Fornecedor} {Tipo (NF, etc)} {Número}". IMPORTANTE: O tipo de documento precisa ser coerente (não use NF para serviço, nem NFSe para produtos). Se aparecer a classificação "Danfe" nas fontes, esse tipo prevalece e deve compor a descrição. Usar estritamente as grafias "NFSe", "Danfe", "NFe" (NUNCA "nfse" minúsculo). Se não houver nenhum documento que permita classificação de tipo, retorne com "Doc nº" e o número obtido (se houver).
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
   (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
 - chave_acesso: Procurar em TODAS as páginas, apenas os 44 ou 50 dígitos numéricos. null se não existir.
@@ -111,7 +112,7 @@ com atenção:
                 "cnpj_cpf_fornecedor": types.Schema(type=types.Type.STRING, description="CNPJ ou CPF do fornecedor"),
                 "nome_fornecedor": types.Schema(
                     type=types.Type.STRING, 
-                    description="Razão Social ou Nome Fantasia. Quando funcionário/prestador PF, usar o nome completo. OBRIGATÓRIO: Title Case, NUNCA caixa alta."
+                    description="Razão Social ou Nome Fantasia. Quando funcionário/prestador PF, usar o nome completo. OBRIGATÓRIO: Title Case, NUNCA caixa alta. OBRIGATÓRIO aplicar acentuação gráfica pt-BR (ex: Comércio, Gestão, Serviços)."
                 ),
                 "numero_despesa": types.Schema(type=types.Type.STRING, description="Número da Nota Fiscal ou Recibo"),
                 "data_emissao": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
@@ -121,10 +122,13 @@ com atenção:
                     type=types.Type.STRING,
                     description="Valor efetivamente pago conforme comprovação de pagamento; NF apenas se não houver comprovação",
                 ),
-                "descricao": types.Schema(type=types.Type.STRING, description="Descrição dos serviços/produtos em Sentence Case. NUNCA caixa alta."),
+                "descricao": types.Schema(
+                    type=types.Type.STRING, 
+                    description="Descrição dos serviços/produtos em Sentence Case. NUNCA caixa alta. OBRIGATÓRIO aplicar acentuação gráfica pt-BR (ex: Comércio, Gestão, Serviços) e tipos corretos (NFSe, Danfe)."
+                ),
                 "contexto_sintetizado": types.Schema(
                     type=types.Type.STRING,
-                    description="Definição contábil do serviço/produto, sem caixa alta",
+                    description="Definição contábil do serviço/produto, com acentuação pt-BR correta, sem caixa alta",
                 ),
                 "chave_acesso": types.Schema(
                     type=types.Type.STRING,
