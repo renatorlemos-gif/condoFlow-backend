@@ -266,13 +266,13 @@ async def _processar_despesa(supabase, doc: dict) -> None:
             logger.info(f"[worker] despesa {doc_id} extraído com sucesso")
 
         try:
-            # 2. Timeout estrito de 60s
-            await asyncio.wait_for(exec_process(), timeout=60.0)
+            # 2. Timeout estrito de 120s
+            await asyncio.wait_for(exec_process(), timeout=120.0)
         except asyncio.TimeoutError:
-            logger.error(f"[worker] Timeout (60s) no processamento {doc_id}")
+            logger.error(f"[worker] Timeout (120s) no processamento {doc_id}")
             supabase.table("despesas").update({
                 "status": "erro",
-                "erro_msg": "Timeout de 60s no processamento",
+                "erro_msg": "Timeout de 120s no processamento",
             }).eq("id", doc_id).execute()
         except Exception as e:
             logger.error(f"[worker] erro ao processar {doc_id}: {e}\n{traceback.format_exc()}")
