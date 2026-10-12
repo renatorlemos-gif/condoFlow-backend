@@ -478,7 +478,10 @@ async def desfazer_conciliacao(conciliacao_id: str):
 async def sugestoes_despesa(
     despesa_id: str,
     mes_ano: str,
-    condominio_id: str | None = None
+    condominio_id: str | None = None,
+    valor_total: float | None = None,
+    data_pagamento: str | None = None,
+    data_emissao: str | None = None,
 ):
     supabase = _get_supabase()
 
@@ -529,6 +532,15 @@ async def sugestoes_despesa(
     candidatas = []
     # Fallback to data_pagamento if available for better score matching, but _calcular_score expects "data_emissao" key
     doc_for_score = dict(despesa)
+
+    # Sobrescrita dinâmica a partir dos parâmetros recebidos da tela
+    if valor_total is not None:
+        doc_for_score["valor_total"] = valor_total
+    if data_emissao is not None:
+        doc_for_score["data_emissao"] = data_emissao
+    if data_pagamento is not None:
+        doc_for_score["data_pagamento"] = data_pagamento
+
     if doc_for_score.get("data_pagamento"):
         doc_for_score["data_emissao"] = doc_for_score["data_pagamento"]
 

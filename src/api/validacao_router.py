@@ -75,7 +75,7 @@ class DespesaDetalhe(BaseModel):
 
 
 class ValidacaoPayload(BaseModel):
-    acao: Literal["confirmar", "rejeitar", "cancelar"]
+    acao: Literal["confirmar", "rejeitar", "cancelar", "salvar"]
     # campos editáveis pela usuária
     fornecedor: str | None = None
     cnpj_cpf: str | None = None
@@ -363,6 +363,32 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
             status_code=400,
             detail=f"Despesa com status '{doc['status']}' não pode ser validado.",
         )
+
+    if payload.acao == "salvar":
+        update = {
+            "fornecedor":      payload.fornecedor,
+            "cnpj_cpf":        payload.cnpj_cpf,
+            "numero_doc":      payload.numero_doc,
+            "data_emissao":    payload.data_emissao,
+            "data_vencimento": payload.data_vencimento,
+            "data_pagamento":  payload.data_pagamento,
+            "valor_total":     payload.valor_total,
+            "descricao":       payload.descricao,
+            "chave_acesso":    payload.chave_acesso,
+            "competencia":     payload.competencia,
+        }
+        if payload.conta_despesa_id:
+            update["conta_despesa_id"] = payload.conta_despesa_id
+        if payload.fonte_pagadora_id:
+            update["fonte_pagadora_id"] = payload.fonte_pagadora_id
+
+        try:
+            supabase.table("despesas").update(update).eq("id", despesa_id).execute()
+        except Exception as e:
+            import traceback
+            raise HTTPException(status_code=500, detail=str(e) + " | " + traceback.format_exc())
+
+        return ValidacaoResponse(ok=True, id=despesa_id, status=doc["status"])
 
     if payload.acao == "cancelar":
         update = {
