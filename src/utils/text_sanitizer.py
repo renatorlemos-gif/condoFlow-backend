@@ -383,14 +383,40 @@ def limitar_tamanho_80(text: str) -> str:
     return truncado.strip()
 
 
-def sanitize_descricao(text: str | None, numero_doc: str | None = None) -> str | None:
+def garantir_ltda_antes_do_documento(text: str, nome_fornecedor: str | None = None) -> str:
+    """
+    Garante que 'Ltda' não desapareça da descrição quando o fornecedor for uma sociedade limitada
+    e houver um tipo de documento associado (ex: Danfe, NFSe, NFe, Doc nº).
+    """
+    if not text:
+        return text
+
+    # Se já tem Ltda na descrição, não precisa mexer
+    if re.search(r'\bLtda\b', text, flags=re.IGNORECASE):
+        return text
+
+    # Verifica se nome_fornecedor contém Ltda
+    tem_ltda_fornec = bool(nome_fornecedor and re.search(r'\bLtda\b', str(nome_fornecedor), flags=re.IGNORECASE))
+
+    if tem_ltda_fornec:
+        # Insere 'Ltda ' imediatamente antes do tipo de documento
+        padrao_tipo = r'(\b(?:Danfe|NFSe|NFe|NF|Doc\s*nº)\b)'
+        if re.search(padrao_tipo, text, flags=re.IGNORECASE):
+            text = re.sub(padrao_tipo, r'Ltda \1', text, count=1)
+        else:
+            text = f"{text} Ltda"
+
+    return text
+
+
+def sanitize_descricao(text: str | None, numero_doc: str | None = None, nome_fornecedor: str | None = None) -> str | None:
     """
     Higieniza a descrição da despesa:
     - Sentence Case geral (primeira palavra maiúscula)
     - Preserva nomes próprios e termos em Title Case
     - Converte 'Danfe' e 'NFSe' adequadamente
     - Garante acentuação e cedilha PT-BR (Comércio, Gestão, Serviços, etc.)
-    - Formata 'Ltda' corretamente
+    - Formata 'Ltda' corretamente e garante sua presença antes do tipo de documento
     - Remove tipo de documento solto (Danfe, NFSe, Doc nº) se não houver numeração
     - Garante limite máximo de 80 caracteres
     """
@@ -424,7 +450,9 @@ def sanitize_descricao(text: str | None, numero_doc: str | None = None) -> str |
                 result.append(palavra_ajustada)
 
     final_text = " ".join(result)
+    # Garante preservação de 'Ltda' antes do tipo de documento se o fornecedor for Ltda
+    com_ltda = garantir_ltda_antes_do_documento(final_text, nome_fornecedor=nome_fornecedor)
     # Limpeza final para garantir que Doc nº ou tipos soltos não fiquem sem número
-    limpo = limpar_documento_sem_numero(final_text, numero_doc=numero_doc)
+    limpo = limpar_documento_sem_numero(com_ltda, numero_doc=numero_doc)
     return limitar_tamanho_80(limpo)
 

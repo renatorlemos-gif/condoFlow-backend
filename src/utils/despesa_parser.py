@@ -95,7 +95,7 @@ com atenção:
 - Datas sempre no formato YYYY-MM-DD.
 - Campos que não aparecerem devem ficar nulos, não invente valores.
 - REGRA CRÍTICA DE ACENTUAÇÃO E ORTOGRAFIA PT-BR: Documentos fiscais e recibos frequentemente omitem acentos e cedilhas por estarem em caixa alta (ex: COMERCIO, GESTAO, SERVICOS, ELETRICA, MANUTENCAO, CONSTRUCAO). Você DEVE OBRIGATORIAMENTE corrigir a grafia de TODAS as palavras para a norma culta com a acentuação correta do Português do Brasil: "Comércio", "Gestão", "Serviços", "Elétrica", "Manutenção", "Construção", "Higienização", "Água", "Gás", etc. NUNCA deixe palavras sem acento ou cedilha em 'nome_fornecedor', 'descricao' e 'contexto_sintetizado'.
-- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". NUNCA retorne em caixa alta integral. Qualquer nome DEVE vir com acentuação correta pt-BR ("Comércio", "Gestão", "Serviços", "Elétrica", etc) mesmo que o arquivo original não os tenha.
+- nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". Se a empresa for sociedade limitada, a terminação "Ltda" NUNCA PODE SER OMITIDA (ex: "LCM Santos Comércio e Atacadista Ltda"). NUNCA retorne em caixa alta integral. Qualquer nome DEVE vir com acentuação correta pt-BR ("Comércio", "Gestão", "Serviços", "Elétrica", etc) mesmo que o arquivo original não os tenha.
 - numero_despesa: Numeração de documentos deve constar SOMENTE NÚMEROS. Remova pontos, traços ou barras, deixando somente números sem espaços. Se a despesa for conta de consumo (agua, luz, gás, etc) sempre busque o número da NF e não o da fatura. null se não existir.
 - contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta e DEVE ter acentuação correta pt-BR.
 - descricao: Escreva em português, padrão Sentence Case (Capitalização normal de sentença, só a primeira letra maiúscula), NUNCA em caixa alta integral. Acentue as palavras OBRIGATORIAMENTE usando padrão pt-BR ("ç", "~", acentos agudos e circunflexos, ex: "Comércio", "Gestão", "Serviços") mesmo se a fonte não os tiver.
@@ -104,7 +104,8 @@ com atenção:
   (1) Salários/Trabalhistas (folha de pagamento, Salários, Adiantamentos, Férias, 13º Salário): a descrição DEVE ser o tipo de despesa seguido do nome completo do funcionário. Exemplos: "Salário Renato Rodrigues Lemos", "Adiantamento Renato Rodrigues Lemos", "Férias Carlos Santana", "13º Salário Fabiana de Oliveira".
   (2) Fiscais/PJ:
       - SE HOUVER número de documento: "{Fornecedor} {Tipo} {Número}". O tipo de documento precisa ser coerente (Danfe para compras/produtos, NFSe para serviços, Doc nº para recibos). Usar estritamente as grafias "NFSe", "Danfe", "NFe", "Doc nº" (NUNCA "DOC nº" em maiúsculo).
-      - SE NÃO HOUVER número de documento (numero_despesa for null): retorne APENAS o nome do fornecedor: "{Fornecedor}". REGRA MANDATÓRIA: O tipo de documento (Doc nº, NF, NFSe, Danfe) SÓ DEVE APARECER se acompanhado de numeração obtida no documento. Se não houver número, o tipo NÃO deve constar solto de forma alguma. NUNCA escreva a palavra "null" ou "Doc nº" solto.
+        REGRA MANDATÓRIA DE PRESERVAÇÃO DE "Ltda": Em fornecedores PJ que são sociedades limitadas (Ltda), a palavra "Ltda" FAZ PARTE DO NOME e DEVE OBRIGATORIAMENTE constar antes do tipo de documento: "{Fornecedor} Ltda {Tipo} {Número}" (Exemplos: "LCM Santos Comércio Atacadista Ltda Danfe 775", "Casa das Bombas Ltda Danfe 31303", "Cmd Gestão e Serviços Ltda NFSe 15"). É TERMINANTEMENTE PROIBIDO omitir ou engolir o "Ltda" ao colocar Danfe, NFSe, NFe ou Doc nº. Mesmo ao abreviar o nome para cumprir os 80 caracteres, o "Ltda" DEVE SER MANTIDO!
+      - SE NÃO HOUVER número de documento (numero_despesa for null): retorne APENAS o nome do fornecedor com "Ltda" (se aplicável): "{Fornecedor}". REGRA MANDATÓRIA: O tipo de documento (Doc nº, NF, NFSe, Danfe) SÓ DEVE APARECER se acompanhado de numeração obtida no documento. Se não houver número, o tipo NÃO deve constar solto de forma alguma. NUNCA escreva a palavra "null" ou "Doc nº" solto.
   (3) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
   (4) Recibos: Quando a despesa for referente a "Recibo" (recibo de pagamento, recibo de prestação de serviços ou comprovante avulso), ao FINAL da descrição sintetizada DEVERÁ CONSTAR OBRIGATORIAMENTE: "conf. recibo." (ex: "{Nome} ref. {serviço} conf. recibo." ou "{Fornecedor} conf. recibo."), respeitando sempre o limite de 80 caracteres.
   (5) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
@@ -118,7 +119,7 @@ com atenção:
                 "cnpj_cpf_fornecedor": types.Schema(type=types.Type.STRING, description="CNPJ ou CPF do fornecedor"),
                 "nome_fornecedor": types.Schema(
                     type=types.Type.STRING, 
-                    description="Razão Social ou Nome Fantasia. Quando funcionário/prestador PF, usar o nome completo. OBRIGATÓRIO: Title Case, NUNCA caixa alta. OBRIGATÓRIO aplicar acentuação gráfica pt-BR (ex: Comércio, Gestão, Serviços)."
+                    description="Razão Social ou Nome Fantasia completo. Se for empresa limitada, DEVE conter 'Ltda'. Title Case. NUNCA caixa alta. Acentuação pt-BR obrigatória."
                 ),
                 "numero_despesa": types.Schema(type=types.Type.STRING, description="Número da Nota Fiscal ou Recibo"),
                 "data_emissao": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
@@ -130,7 +131,7 @@ com atenção:
                 ),
                 "descricao": types.Schema(
                     type=types.Type.STRING, 
-                    description="Descrição em Sentence Case com no MÁXIMO 80 caracteres (abrevie o fornecedor se necessário). Salários/Adiantamento/Férias: 'Tipo Nome'. Recibos: finalizar com 'conf. recibo.'. Documentos fiscais: tipo só se houver número. NUNCA usar 'null'."
+                    description="Descrição em Sentence Case com no MÁXIMO 80 caracteres. Se for empresa Ltda, OBRIGATÓRIO manter 'Ltda' antes de Danfe/NFSe (ex: 'LCM Santos Comércio Atacadista Ltda Danfe 775'). Salários/Adiantamento/Férias: 'Tipo Nome'. Recibos: finalizar com 'conf. recibo.'. NUNCA usar 'null'."
                 ),
                 "contexto_sintetizado": types.Schema(
                     type=types.Type.STRING,
@@ -255,16 +256,18 @@ com atenção:
 
         from src.utils.text_sanitizer import sanitize_nome_fornecedor, sanitize_descricao
         
+        fornec_limpo = sanitize_nome_fornecedor(bruto.nome_fornecedor)
+
         dados_extraidos = DadosExtraidosDTO(
             cnpj_cpf_fornecedor=bruto.cnpj_cpf_fornecedor,
-            nome_fornecedor=sanitize_nome_fornecedor(bruto.nome_fornecedor),
+            nome_fornecedor=fornec_limpo,
             numero_despesa=bruto.numero_despesa,
             data_emissao=bruto.data_emissao,
             data_vencimento=bruto.data_vencimento,
             data_pagamento=bruto.data_pagamento,
             valor_total=valor_processado,
-            descricao=sanitize_descricao(bruto.descricao, numero_doc=bruto.numero_despesa),
-            contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado, numero_doc=bruto.numero_despesa),
+            descricao=sanitize_descricao(bruto.descricao, numero_doc=bruto.numero_despesa, nome_fornecedor=fornec_limpo),
+            contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado, numero_doc=bruto.numero_despesa, nome_fornecedor=fornec_limpo),
             chave_acesso=bruto.chave_acesso,
             competencia=comp,
         )

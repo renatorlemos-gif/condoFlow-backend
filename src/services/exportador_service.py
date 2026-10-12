@@ -18,7 +18,7 @@ class ExportadorService:
         # 1. Despesas validados
         res_val = (
             self.db.table("despesas")
-            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
+            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, competencia, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
             .eq("condominio_id", condominio_id)
             .eq("status", "validado")
             .not_.is_("conta_despesa_id", "null")
@@ -28,7 +28,7 @@ class ExportadorService:
         # 2. Despesas conciliados
         res_conc = (
             self.db.table("despesas")
-            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
+            .select("id, fornecedor, numero_doc, data_pagamento, data_emissao, valor_total, descricao, competencia, sugestao_contabil, conta_despesa_id, fonte_pagadora_id, plano_contas(codigo_contabil), fontes_pagadoras(plano_conta_id, plano_contas(codigo_contabil, descricao))")
             .eq("condominio_id", condominio_id)
             .eq("status", "conciliado")
             .not_.is_("conta_despesa_id", "null")
@@ -64,6 +64,7 @@ class ExportadorService:
                 "data_emissao": d.get("data_emissao"),
                 "valor_total": d.get("valor_total"),
                 "descricao": d.get("descricao"),
+                "competencia": d.get("competencia"),
                 "conta_deb": conta_deb,
                 "conta_cred": conta_cred
             })
@@ -117,9 +118,15 @@ class ExportadorService:
             part_2 = str(conta_deb)
             part_3 = data_fmt
             
-            # DT_COTA (MM/YYYY)
+            # DT_COTA (MM/YYYY) - Pegar exatamente do campo despesa.competencia
             dt_cota = ""
-            if raw_date:
+            comp_raw = (doc.get("competencia") or "").strip()
+            if comp_raw and "/" in comp_raw:
+                dt_cota = comp_raw
+            elif comp_raw and len(comp_raw) == 7 and "-" in comp_raw:
+                ano_c, mes_c = comp_raw.split("-")
+                dt_cota = f"{mes_c}/{ano_c}"
+            elif raw_date:
                 dt_cota = f"{mm}/{yyyy}"
             part_4 = dt_cota
             
