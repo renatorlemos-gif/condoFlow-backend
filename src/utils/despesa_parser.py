@@ -70,6 +70,15 @@ def parse_valor_brl(valor_str: str | None) -> float | None:
         return None
 
 
+def sanitize_chave_acesso(chave: str | None) -> str | None:
+    if not chave:
+        return None
+    digitos = re.sub(r"\D", "", str(chave).strip())
+    if len(digitos) == 44:
+        return digitos
+    return None
+
+
 class DespesaParser:
     def __init__(self):
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -96,7 +105,10 @@ com atenção:
 - Campos que não aparecerem devem ficar nulos, não invente valores.
 - REGRA CRÍTICA DE ACENTUAÇÃO E ORTOGRAFIA PT-BR: Documentos fiscais e recibos frequentemente omitem acentos e cedilhas por estarem em caixa alta (ex: COMERCIO, GESTAO, SERVICOS, ELETRICA, MANUTENCAO, CONSTRUCAO). Você DEVE OBRIGATORIAMENTE corrigir a grafia de TODAS as palavras para a norma culta com a acentuação correta do Português do Brasil: "Comércio", "Gestão", "Serviços", "Elétrica", "Manutenção", "Construção", "Higienização", "Água", "Gás", etc. NUNCA deixe palavras sem acento ou cedilha em 'nome_fornecedor', 'descricao' e 'contexto_sintetizado'.
 - nome_fornecedor: Retorne em padrão Title Case (Nomes Próprios com iniciais maiúsculas), preposições em minúsculas. O nome do fornecedor/prestador/funcionário sempre precisa ser COMPLETO, sem abreviações. Quando fizer parte do nome do fornecedor, a formatação DEVE ser "Ltda" e não "LTDA" ou "LTDA.". Se a empresa for sociedade limitada, a terminação "Ltda" NUNCA PODE SER OMITIDA (ex: "LCM Santos Comércio e Atacadista Ltda"). NUNCA retorne em caixa alta integral. Qualquer nome DEVE vir com acentuação correta pt-BR ("Comércio", "Gestão", "Serviços", "Elétrica", etc) mesmo que o arquivo original não os tenha.
-- numero_despesa: Numeração de documentos deve constar SOMENTE NÚMEROS. Remova pontos, traços ou barras, deixando somente números sem espaços. Se a despesa for conta de consumo (agua, luz, gás, etc) sempre busque o número da NF e não o da fatura. null se não existir.
+- numero_despesa: Numeração de documentos fiscais deve conter SOMENTE NÚMEROS (remova pontos, traços, barras ou letras).
+  (1) Despesas de consumo (energia elétrica, água/esgoto, gás canalizado): busque PRIORITARIAMENTE o número da Nota Fiscal (NF, NF-e, NF3e, NFS-e, Danfe). Se a conta de consumo não possuir número de NF impresso, use o número da fatura/código do cliente como fallback.
+  (2) Guias de ISS (imposto sobre serviços / ISSQN): busque OBRIGATORIAMENTE o número da guia de recolhimento, considerando rótulos equivalentes como "Nº da Guia", "Nº do DAM" ou "Nº do Documento".
+  (3) Demais documentos: número da NF, recibo ou duplicata. null se não existir.
 - contexto_sintetizado: Remova nomes próprios/números, PRESERVE termos técnicos e o núcleo do serviço prestado (ex: Autovistoria, Material Elétrico). O texto NUNCA deve ser em caixa alta e DEVE ter acentuação correta pt-BR.
 - descricao: Escreva em português, padrão Sentence Case, NUNCA em caixa alta integral. Acentue as palavras OBRIGATORIAMENTE usando padrão pt-BR ("ç", "~", acentos agudos e circunflexos). Elabore um histórico conciso e objetivo, idealmente em até 80 caracteres (mas sem cortar ou mutilar nomes de fornecedores).
   Siga estas diretrizes de composição:
@@ -106,7 +118,7 @@ com atenção:
   (2) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
   (3) Recibos: Quando a despesa for recibo avulso ou prestação de serviços sem nota fiscal, inclua ao final: "conf. recibo." (ex: "{Nome} ref. {serviço} conf. recibo." ou "{Fornecedor} conf. recibo.").
   (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
-- chave_acesso: Procurar em TODAS as páginas, apenas os 44 ou 50 dígitos numéricos. null se não existir.
+- chave_acesso: Apenas os 44 dígitos numéricos contínuos da Nota Fiscal Eletrônica (NF-e/NFC-e/CT-e), SEM ESPAÇOS e sem pontuação. Se o documento não possuir chave de acesso com 44 dígitos, retorne null.
 - REGRA 9 (COMPETÊNCIA): Formato MM/YYYY. Faça uma BUSCA EXAUSTIVA por menções expressas da data/período de execução do serviço ou compra no corpo do texto (ex: "ref. ao mês de", "competência"). Apenas se não encontrar, use a data de emissão. E como último recurso absoluto, a data de pagamento. NUNCA DEVE FICAR NULA.
 - REGRA 10 (FORNECEDOR PF/TRABALHISTA E CONDOMÍNIO): O fornecedor é sempre quem prestou o serviço/vendeu o produto. Em recibos de salários, férias, adiantamentos ou prestadores pessoa física, o 'nome_fornecedor' é SEMPRE o nome completo da pessoa física (funcionário/prestador) e o CPF vai em 'cnpj_cpf_fornecedor'. O Condomínio pagador é TERMINANTEMENTE PROIBIDO de constar como fornecedor. Se não houver número fiscal explícito, 'numero_despesa' deve ser null."""
 
@@ -140,7 +152,7 @@ com atenção:
                 ),
                 "chave_acesso": types.Schema(
                     type=types.Type.STRING,
-                    description="Chave de Acesso da nota fiscal, contendo apenas os 44 ou 50 dígitos numéricos",
+                    description="Chave de Acesso oficial da NF-e contendo exatamente 44 dígitos numéricos, sem espaços e sem pontuação. null se não existir.",
                     nullable=True,
                 ),
                 "competencia": types.Schema(
@@ -269,7 +281,7 @@ com atenção:
             valor_total=valor_processado,
             descricao=sanitize_descricao(bruto.descricao, numero_doc=bruto.numero_despesa, nome_fornecedor=fornec_limpo),
             contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado, numero_doc=bruto.numero_despesa, nome_fornecedor=fornec_limpo),
-            chave_acesso=bruto.chave_acesso,
+            chave_acesso=sanitize_chave_acesso(bruto.chave_acesso),
             competencia=comp,
         )
 

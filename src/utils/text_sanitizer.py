@@ -1,9 +1,19 @@
 import re
 
 ACRONYMS = {
-    "S/A", "SA", "ME", "EPP", "EIRELI", "SABESP", "PIX", "NF", "DARF",
+    "ME", "EPP", "EIRELI", "SABESP", "PIX", "NF", "DARF",
     "CNPJ", "CPF", "MEI", "TED", "FGTS", "INSS", "GPS", "IRRF", "ISS"
 }
+
+# Expressão para capturar variações isoladas de S.A.
+PADRAO_SA = re.compile(r'\b(S[\./]?A\.?|S\.a\.?|s[\./]?a\.?)(?!\w)', re.IGNORECASE)
+
+def normalizar_sociedade_anonima(texto: str) -> str:
+    """Substitui unificadamente qualquer variação de Sociedade Anônima pela forma canônica 'S.A.'."""
+    if not texto:
+        return texto
+    substituido = PADRAO_SA.sub('S.A.', texto)
+    return re.sub(r'S\.A\.\.+', 'S.A.', substituido)
 
 SPECIAL_DOC_TYPES = {
     "doc": "Doc",
@@ -268,11 +278,17 @@ def _ajustar_palavra(w: str, forcar_title: bool = False, manter_siglas: bool = T
     clean_low = clean_w.lower()
     clean_up = clean_w.upper()
 
-    # 1. Regra especial para 'Ltda'
+    # 1. Regra especial para Sociedade Anônima ('S.A.')
+    if clean_low in ("s.a", "s.a.", "s/a", "sa"):
+        if suffix.startswith("."):
+            suffix = suffix.lstrip(".")
+        return prefix + "S.A." + suffix
+
+    # 2. Regra especial para 'Ltda'
     if clean_low in ("ltda", "ltda."):
         return prefix + "Ltda" + suffix
 
-    # 2. Regra especial para tipos fiscais conhecidos (NFSe, Danfe, etc.)
+    # 3. Regra especial para tipos fiscais conhecidos (NFSe, Danfe, etc.)
     if clean_low in SPECIAL_DOC_TYPES:
         return prefix + SPECIAL_DOC_TYPES[clean_low] + suffix
 
