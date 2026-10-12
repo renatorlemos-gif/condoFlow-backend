@@ -44,13 +44,17 @@ def _salvar_transacoes(
     registros = []
 
     for _, row in df.iterrows():
+        # Restringe estritamente a inserção no banco à categoria "Outros Gastos" (RF-27 / US-01)
+        categoria_raw = str(row.get("Categoria", "")).strip()
+        if categoria_raw.lower() != "outros gastos":
+            continue
+
         credito = float(row.get("Crédito (R$)", 0.0) or 0.0)
         debito  = float(row.get("Débito (R$)",  0.0) or 0.0)
         descricao = str(row.get("Lançamento", "") or "")
         
-        # Categorização
-        categoria = str(row.get("Categoria", "")).strip()
-        metadados = {"categoria": categoria if categoria else "Sem Categoria"}
+        # Categorização padronizada
+        metadados = {"categoria": "Outros Gastos"}
 
         # Cada linha vira uma transação – crédito e débito numa mesma linha
         # são raros mas possíveis (ex: estorno parcial). Tratamos separado.

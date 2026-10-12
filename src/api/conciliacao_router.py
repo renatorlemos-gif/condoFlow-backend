@@ -180,13 +180,17 @@ async def listar_transacoes(
 ):
     supabase = _get_supabase()
 
-    query = supabase.table("transacoes_extrato").select("*").order("data_transacao", desc=True).limit(limit)
+    query = (
+        supabase.table("transacoes_extrato")
+        .select("*")
+        .eq("metadados->>categoria", "Outros Gastos")
+        .order("data_transacao", desc=True)
+        .limit(limit)
+    )
     if condominio_id:
         query = query.eq("condominio_id", condominio_id)
     if banco:
         query = query.eq("banco", banco)
-    if grupos:
-        query = query.in_("metadados->>categoria", grupos)
     if mes_ano:
         import calendar
         inicio = f"{mes_ano}-01"
@@ -504,6 +508,7 @@ async def sugestoes_despesa(
         supabase.table("transacoes_extrato")
         .select("*")
         .eq("condominio_id", condo_id_query)
+        .eq("metadados->>categoria", "Outros Gastos")
         .gte("data_transacao", inicio)
         .lte("data_transacao", fim)
         .execute()
