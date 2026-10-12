@@ -1,5 +1,6 @@
 import os
 import datetime
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from supabase import create_client
@@ -35,11 +36,13 @@ class ContaCreate(BaseModel):
     codigo_contabil: str
     descricao: str
     contexto: str
+    descricao_padrao: Optional[str] = None
 
 class ContaUpdateContexto(BaseModel):
     contexto: str
+    descricao_padrao: Optional[str] = None
     model_config = {
-        "extra": "forbid"
+        "extra": "ignore"
     }
 
 @router.post("/")
@@ -52,7 +55,7 @@ async def create_conta(conta: ContaCreate):
         if existing.data:
             raise HTTPException(status_code=409, detail=f"A conta '{conta.codigo_contabil}' já se encontra registrada no Plano de Contas da administradora. Contas inativadas não liberam reaproveitamento de código contábil.")
             
-        # Gera embedding síncrono
+        # Gera embedding síncrono (mantendo estritamente isolado de descricao_padrao)
         texto_ancora = f"{conta.descricao} - {conta.contexto}"
         try:
             embedding = _generate_embedding(texto_ancora)
@@ -65,6 +68,7 @@ async def create_conta(conta: ContaCreate):
             "codigo_contabil": conta.codigo_contabil,
             "descricao": conta.descricao,
             "contexto": conta.contexto,
+            "descricao_padrao": conta.descricao_padrao.strip() if conta.descricao_padrao and conta.descricao_padrao.strip() else None,
             "embedding": embedding,
             "ativo": True,
             "criada_por_ia": False,
@@ -106,6 +110,8 @@ async def update_contexto(conta_id: str, update_data: ContaUpdateContexto):
             "criada_por_ia": False,
             "updated_at": datetime.datetime.utcnow().isoformat()
         }
+        if update_data.descricao_padrao is not None:
+            update_payload["descricao_padrao"] = update_data.descricao_padrao.strip() if update_data.descricao_padrao.strip() else None
         
         res = supabase.table("plano_contas").update(update_payload).eq("id", conta_id).execute()
         return res.data[0]
@@ -139,7 +145,7 @@ async def delete_conta(conta_id: str):
 async def get_plano_contas(administradora_id: str):
     try:
         supabase = _get_supabase()
-        response = supabase.table("plano_contas").select("id, codigo_contabil, descricao, contexto, updated_at, criada_por_ia").eq("administradora_id", administradora_id).eq("ativo", True).execute()
+        response = supabase.table("plano_contas").select("id, codigo_contabil, descricao, contexto, descricao_padrao, updated_at, criada_por_ia").eq("administradora_id", administradora_id).eq("ativo", True).execute()
         
         data = response.data or []
         def sort_key(c):

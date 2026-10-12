@@ -60,6 +60,7 @@ class DespesaDetalhe(BaseModel):
     data_pagamento: str | None
     valor_total: float | None
     descricao: str | None
+    descricao_original: str | None = None
     hash_arquivo: str | None
     sugestao_contabil: dict | None
     administradora_id: int | str | None
@@ -215,6 +216,7 @@ async def detalhe_despesa(despesa_id: str):
         data_pagamento=doc.get("data_pagamento"),
         valor_total=doc.get("valor_total"),
         descricao=doc.get("descricao"),
+        descricao_original=doc.get("descricao_original"),
         hash_arquivo=doc.get("hash_arquivo"),
         sugestao_contabil=doc.get("sugestao_contabil"),
         administradora_id=doc.get("administradora_id"),
@@ -233,6 +235,7 @@ class ContaOpcao(BaseModel):
     id: str
     codigo_contabil: str
     descricao: str
+    descricao_padrao: str | None = None
     similarity: float | None = None
 
 
@@ -262,6 +265,15 @@ async def obter_contas_sugeridas(despesa_id: str):
     if not admin_id:
         return []
 
+    # Busca o plano de contas completo da administradora incluindo descricao_padrao
+    res_contas = (
+        supabase.table("plano_contas")
+        .select("id, codigo_contabil, descricao, descricao_padrao")
+        .eq("administradora_id", str(admin_id))
+        .execute()
+    )
+    contas_map = {c["id"]: c for c in (res_contas.data or [])}
+
     top_5 = []
     top_5_ids = set()
 
@@ -278,10 +290,13 @@ async def obter_contas_sugeridas(despesa_id: str):
             
             if res_rpc.data:
                 for row in res_rpc.data:
+                    c_info = contas_map.get(row["id"])
+                    desc_padrao = (c_info.get("descricao_padrao") if c_info else None) or row.get("descricao_padrao")
                     top_5.append(ContaOpcao(
                         id=row["id"],
-                        codigo_contabil=row["codigo_contabil"],
-                        descricao=row["descricao"],
+                        codigo_contabil=row.get("codigo_contabil") or (c_info.get("codigo_contabil") if c_info else ""),
+                        descricao=row.get("descricao") or (c_info.get("descricao") if c_info else ""),
+                        descricao_padrao=desc_padrao,
                         similarity=row.get("similarity")
                     ))
                     top_5_ids.add(row["id"])
@@ -290,14 +305,7 @@ async def obter_contas_sugeridas(despesa_id: str):
             logger = logging.getLogger("validacao_router")
             logger.error(f"Erro ao chamar match_plano_contas RPC: {e}")
 
-    # Busca as outras contas
-    res_contas = (
-        supabase.table("plano_contas")
-        .select("id, codigo_contabil, descricao")
-        .eq("administradora_id", str(admin_id))
-        .execute()
-    )
-
+    # Monta outras contas não ranqueadas no top 5
     outras_contas = []
     if res_contas.data:
         for c in res_contas.data:
@@ -305,7 +313,8 @@ async def obter_contas_sugeridas(despesa_id: str):
                 outras_contas.append({
                     "id": c["id"],
                     "codigo_contabil": c["codigo_contabil"],
-                    "descricao": c["descricao"]
+                    "descricao": c["descricao"],
+                    "descricao_padrao": c.get("descricao_padrao")
                 })
         
         # Order alphabetically
@@ -316,6 +325,7 @@ async def obter_contas_sugeridas(despesa_id: str):
                 id=c["id"],
                 codigo_contabil=c["codigo_contabil"],
                 descricao=c["descricao"],
+                descricao_padrao=c.get("descricao_padrao"),
                 similarity=None
             ))
 

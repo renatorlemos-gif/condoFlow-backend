@@ -20,12 +20,24 @@ import io
 import logging
 import math
 import os
+import re
 import traceback
 from datetime import datetime, timezone
 
 from supabase import create_client
 
 logger = logging.getLogger("extrator_worker")
+
+def interpolar_descricao(template: str | None, fornecedor: str | None, numero_doc: str | None) -> str:
+    if not template:
+        return ""
+    texto = template
+    f_val = (fornecedor or "").strip()
+    texto = re.sub(r"<fornecedor>", f_val, texto, flags=re.IGNORECASE)
+    doc_val = (numero_doc or "").strip()
+    texto = re.sub(r"<numero_doc>", doc_val, texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
 def _get_supabase():
@@ -107,6 +119,8 @@ async def _processar_despesa(supabase, doc: dict) -> None:
             # 2. RAG para classificação contábil
             codigo_contabil = None
             conta_nome = "Conta Classificada"
+            top_match_id = None
+            desc_padrao = None
             desc_segura = getattr(dados, "descricao", None) or "serviços prestados"
             fornec_seguro = getattr(dados, "nome_fornecedor", None) or ""
             contexto_sintetizado = getattr(dados, "contexto_sintetizado", None) or f"{fornec_seguro} {desc_segura}".strip()
@@ -157,6 +171,18 @@ async def _processar_despesa(supabase, doc: dict) -> None:
                         top_match = res_rag.data[0]
                         codigo_contabil = top_match.get('codigo_contabil')
                         conta_nome = top_match.get('descricao', 'N/A')
+                        top_match_id = top_match.get('id')
+                        
+                        desc_padrao = top_match.get('descricao_padrao')
+                        if not desc_padrao and top_match_id:
+                            try:
+                                def _fetch_desc_padrao():
+                                    return supabase.table("plano_contas").select("descricao_padrao").eq("id", top_match_id).single().execute()
+                                pc_res = await asyncio.to_thread(_fetch_desc_padrao)
+                                if pc_res.data:
+                                    desc_padrao = pc_res.data.get("descricao_padrao")
+                            except Exception:
+                                pass
                         
                         sim = top_match.get('similarity')
                         if sim is None or str(sim).lower() == 'nan' or (isinstance(sim, float) and math.isnan(sim)):
@@ -170,6 +196,8 @@ async def _processar_despesa(supabase, doc: dict) -> None:
             except Exception as e:
                 logger.error(f"Erro no fluxo RAG: {e}\n{traceback.format_exc()}")
                 codigo_contabil = None
+                top_match_id = None
+                desc_padrao = None
                 score = 0.0
                 origem_sugestao = "rag_erro"
 
@@ -188,6 +216,18 @@ async def _processar_despesa(supabase, doc: dict) -> None:
                     return None
                 return d
 
+            desc_gemini = getattr(dados, "descricao", None) or ""
+            descricao_original = desc_gemini
+
+            if desc_padrao and desc_padrao.strip():
+                descricao_final = interpolar_descricao(
+                    desc_padrao,
+                    getattr(dados, "nome_fornecedor", None),
+                    getattr(dados, "numero_despesa", None)
+                )
+            else:
+                descricao_final = desc_gemini
+
             # Atualiza o registro no banco
             update_data = {
                 "status":            "extraido",
@@ -198,7 +238,8 @@ async def _processar_despesa(supabase, doc: dict) -> None:
                 "data_vencimento":   _clean_date(dados.data_vencimento),
                 "data_pagamento":    _clean_date(dados.data_pagamento),
                 "valor_total":       dados.valor_total,
-                "descricao":         dados.descricao,
+                "descricao":         descricao_final,
+                "descricao_original": descricao_original,
                 "hash_arquivo":      hash_arquivo,
                 "sugestao_contabil": sugestao_json,
                 "extraido_em":       datetime.now(timezone.utc).isoformat(),
@@ -207,6 +248,8 @@ async def _processar_despesa(supabase, doc: dict) -> None:
                 "chave_acesso":      getattr(dados, "chave_acesso", None),
                 "competencia":       getattr(dados, "competencia", None),
             }
+            if top_match_id:
+                update_data["conta_despesa_id"] = top_match_id
             if embedding_val:
                 update_data["embedding"] = list(embedding_val)
 
