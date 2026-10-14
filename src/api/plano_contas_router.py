@@ -110,8 +110,11 @@ async def update_contexto(conta_id: str, update_data: ContaUpdateContexto):
             "criada_por_ia": False,
             "updated_at": datetime.datetime.utcnow().isoformat()
         }
-        if update_data.descricao_padrao is not None:
-            update_payload["descricao_padrao"] = update_data.descricao_padrao.strip() if update_data.descricao_padrao.strip() else None
+        
+        # Suporte à persistência de NULL quando o campo for enviado limpo
+        if "descricao_padrao" in update_data.model_fields_set:
+            val = update_data.descricao_padrao
+            update_payload["descricao_padrao"] = val.strip() if (val and val.strip()) else None
         
         res = supabase.table("plano_contas").update(update_payload).eq("id", conta_id).execute()
         return res.data[0]
