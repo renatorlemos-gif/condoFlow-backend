@@ -47,7 +47,7 @@ async def listar_administradoras():
     supabase = _get_supabase()
     if supabase:
         try:
-            res = supabase.table("administradoras").select("*").eq("ativo", True).execute()
+            res = supabase.table("administradoras").select("*").eq("ativo", True).order("nome").execute()
             if res.data:
                 return res.data
         except Exception:
@@ -63,7 +63,7 @@ async def listar_condominios(administradora_id: Optional[str] = Query(None)):
             query = supabase.table("condominios").select("*").eq("ativo", True)
             if administradora_id:
                 query = query.eq("administradora_id", administradora_id)
-            res = query.execute()
+            res = query.order("nome").execute()
             if res.data:
                 return res.data
         except Exception:

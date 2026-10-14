@@ -1,4 +1,4 @@
-﻿import os
+import os
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -66,7 +66,7 @@ async def listar_administradoras(ativo: Optional[bool] = None):
     query = supabase.table("administradoras").select("*")
     if ativo is not None:
         query = query.eq("ativo", ativo)
-    res = query.execute()
+    res = query.order("nome").execute()
     return res.data
 
 @router.get("/administradoras/{id}", response_model=AdministradoraOut)
@@ -111,7 +111,7 @@ async def listar_condominios(administradora_id: Optional[str] = None, ativo: Opt
         query = query.eq("administradora_id", administradora_id)
     if ativo is not None:
         query = query.eq("ativo", ativo)
-    res = query.execute()
+    res = query.order("nome").execute()
     return res.data
 
 @router.get("/condominios/{id}", response_model=CondominioOut)
