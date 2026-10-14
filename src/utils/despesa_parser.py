@@ -3,6 +3,7 @@ import os
 import re
 import asyncio
 import random
+import logging
 
 from fastapi import UploadFile
 import pydantic
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
+
+logger = logging.getLogger("despesa_parser")
 
 
 class DadosExtraidosDTO(BaseModel):
@@ -162,8 +165,9 @@ com atenção:
             },
         )
 
-        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.1-flash-lite")
-        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-3.8-flash")
+        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.5-flash-lite")
+        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-flash-lite-latest")
+        model_tertiary = "gemini-3-flash-preview"
         
         modelo_atual = model_primary
         max_tentativas = 4
@@ -242,8 +246,19 @@ com atenção:
                                         except Exception:
                                             pass
                             await asyncio.sleep(delay)
-                    elif "503" in str(e):
-                        delay = 5 + random.uniform(2, 6)
+                    elif "503" in str(e) or e.code == 503:
+                        if modelo_atual == model_primary:
+                            novo_modelo = model_fallback
+                        elif modelo_atual == model_fallback:
+                            novo_modelo = model_tertiary
+                        else:
+                            novo_modelo = model_fallback
+                        logger.warning(
+                            f"Erro 503 no modelo '{modelo_atual}'. Failover para '{novo_modelo}' "
+                            f"(tentativa {attempt}/{max_tentativas})."
+                        )
+                        modelo_atual = novo_modelo
+                        delay = random.uniform(2, 4)
                         await asyncio.sleep(delay)
                     else:
                         # Para outros erros de rede (ex: SSL drop, httpx.ReadError), tenta mais uma vez
@@ -251,6 +266,20 @@ com atenção:
                             await asyncio.sleep(2)
                         else:
                             raise e
+                elif "503" in str(e):
+                    if modelo_atual == model_primary:
+                        novo_modelo = model_fallback
+                    elif modelo_atual == model_fallback:
+                        novo_modelo = model_tertiary
+                    else:
+                        novo_modelo = model_fallback
+                    logger.warning(
+                        f"Erro 503 no modelo '{modelo_atual}'. Failover para '{novo_modelo}' "
+                        f"(tentativa {attempt}/{max_tentativas})."
+                    )
+                    modelo_atual = novo_modelo
+                    delay = random.uniform(2, 4)
+                    await asyncio.sleep(delay)
                 else:
                     raise e
 
