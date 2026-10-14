@@ -5,6 +5,7 @@ import os
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from src.api.despesa_router import router as despesa_router
 from src.api.validacao_router import router as validacao_router
@@ -21,6 +22,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
 
 app = FastAPI(title="CondoFlow API", version="1.0")
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # ------------------------------------------------------------------ #
 #  CORS                                                               #

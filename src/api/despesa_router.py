@@ -74,7 +74,7 @@ async def upload_despesa_fiscal(
                 pdf_bytes = img_doc.convert_to_pdf()
                 pdf_doc = pymupdf.open("pdf", pdf_bytes)
                 merged_pdf.insert_pdf(pdf_doc)
-        return merged_pdf.write()
+        return merged_pdf.write(deflate=True, garbage=4)
     
     final_bytes = await asyncio.to_thread(_merge_files_sync, files_data)
     
