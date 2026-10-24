@@ -82,8 +82,8 @@ class TestUS01ContextoService(unittest.TestCase):
         self.assertIn("taxas administrativas", source)
         self.assertIn("REGRA CRITICA: Voce deve GENERALIZAR o conteudo", source)
 
-    def test_us01_cenario03_incorporacao_incremental_cosseno_menor_ou_igual_85(self):
-        """Cenario 03: Incorporacao incremental condensada quando similaridade <= 0.85."""
+    def test_us01_cenario03_incorporacao_incremental_cosseno_menor_ou_igual_70(self):
+        """Cenario 03: Incorporacao incremental condensada quando similaridade <= 0.70."""
         supabase_mock = MagicMock()
         # Conta existente com contexto e embedding
         supabase_mock.table().select().eq().eq().execute.return_value.data = [{
@@ -94,7 +94,7 @@ class TestUS01ContextoService(unittest.TestCase):
 
         mock_client = MagicMock()
         
-        # Similaridade calculada simulando 0.74 (<= 0.85)
+        # Similaridade calculada simulando 0.65 (<= 0.70)
         # Mock do embed_content para novo_descritivo e para ancoragem
         mock_emb_desc = MagicMock()
         mock_emb_desc.embeddings = [MagicMock(values=[0.2] * 768)]
@@ -109,7 +109,7 @@ class TestUS01ContextoService(unittest.TestCase):
         mock_client.models.generate_content.return_value = mock_resp
 
         with patch("google.genai.Client", return_value=mock_client), \
-             patch.object(ContextoService, "_cosine_similarity", return_value=0.74):
+             patch.object(ContextoService, "_cosine_similarity", return_value=0.65):
             sucesso, novo_ctx = ContextoService.atualizar_contexto(
                 supabase=supabase_mock,
                 admin_id="adm-123",
@@ -124,8 +124,8 @@ class TestUS01ContextoService(unittest.TestCase):
         mock_client.models.generate_content.assert_called_once()
         supabase_mock.table().update.assert_called_once()
 
-    def test_us01_cenario04_gatekeeper_cosseno_maior_85_descarta_sem_chamar_llm(self):
-        """Cenario 04: Gatekeeper de cosseno > 0.85 descarta atualizacao sem chamada de LLM."""
+    def test_us01_cenario04_gatekeeper_cosseno_maior_70_descarta_sem_chamar_llm(self):
+        """Cenario 04: Gatekeeper de cosseno > 0.70 descarta atualizacao sem chamada de LLM."""
         supabase_mock = MagicMock()
         supabase_mock.table().select().eq().eq().execute.return_value.data = [{
             "descricao": "Energia Eletrica",
@@ -343,8 +343,8 @@ class TestUS03BalanceteRouter(unittest.IsolatedAsyncioTestCase):
         # Verifica que marcou processado_ia = True
         table_mock.update.assert_called_with({"processado_ia": True})
 
-    async def test_us03_cenario02_descarte_legitimo_cosseno_maior_85_marca_processado_sem_erro(self):
-        """Cenario 02: Descarte legitimo de conta ja conhecida (> 0.85) marca processado_ia sem gerar erro."""
+    async def test_us03_cenario02_descarte_legitimo_cosseno_maior_70_marca_processado_sem_erro(self):
+        """Cenario 02: Descarte legitimo de conta ja conhecida (> 0.70) marca processado_ia sem gerar erro."""
         dados = [
             {
                 "id": "bal-conhecido-1",
@@ -356,7 +356,7 @@ class TestUS03BalanceteRouter(unittest.IsolatedAsyncioTestCase):
         ]
         mock_supabase, table_mock, _, _ = self._setup_mock_supabase(dados)
 
-        # ContextoService retorna (False, None) por gatekeeper de similaridade > 0.85
+        # ContextoService retorna (False, None) por gatekeeper de similaridade > 0.70
         with patch.dict(os.environ, {"SUPABASE_URL": "http://mock", "SUPABASE_SERVICE_KEY": "key", "GEMINI_API_KEY": "gkey"}), \
              patch("src.api.balancete_router.create_client", return_value=mock_supabase), \
              patch("src.services.contexto_service.ContextoService.atualizar_contexto", return_value=(False, None)), \
@@ -370,8 +370,8 @@ class TestUS03BalanceteRouter(unittest.IsolatedAsyncioTestCase):
         # Deve ter atualizado processado_ia para True nos lancamentos
         table_mock.update.assert_called_with({"processado_ia": True})
 
-    async def test_us03_cenario03_incorporacao_incremental_balancete_cosseno_menor_85(self):
-        """Cenario 03: Incorporacao incremental de lancamentos de balancete com similaridade <= 0.85."""
+    async def test_us03_cenario03_incorporacao_incremental_balancete_cosseno_menor_70(self):
+        """Cenario 03: Incorporacao incremental de lancamentos de balancete com similaridade <= 0.70."""
         dados = [
             {
                 "id": "bal-inc-1",

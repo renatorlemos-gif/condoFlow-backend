@@ -96,13 +96,13 @@ class ContextoService:
                 novo_descritivo_embedding = emb_res.embeddings[0].values
                 
                 sim = ContextoService._cosine_similarity(novo_descritivo_embedding, embedding_atual)
-                if sim > 0.85:
-                    logger.info(f"[ContextoService] Atualizacao ignorada: Similaridade de cosseno {sim:.4f} > 0.85 (A IA ja conhece este padro para a conta {codigo_contabil}).")
+                if sim > 0.70:
+                    logger.info(f"[ContextoService] Atualizacao ignorada: Similaridade de cosseno {sim:.4f} > 0.70 (A IA ja conhece este padro para a conta {codigo_contabil}).")
                     return False, None
                 else:
-                    logger.info(f"[ContextoService] Contexto precisa ser atualizado para a conta {codigo_contabil}: similaridade={sim:.4f} <= 0.85.")
+                    logger.info(f"[ContextoService] Contexto precisa ser atualizado para a conta {codigo_contabil}: similaridade={sim:.4f} <= 0.70.")
             
-            # Se nao existir ou se for <= 0.85
+            # Se nao existir ou se for <= 0.70
             if contexto_atual:
                 prompt = (
                     f"Incorpore a NATUREZA CONTABIL desta nova despesa/historico: '{novo_descritivo}' "
