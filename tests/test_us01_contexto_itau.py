@@ -25,7 +25,7 @@ class TestUs01ContextoItau(unittest.TestCase):
 
         self.assertFalse(df_out.empty)
         self.assertEqual(len(df_out), 3)
-        self.assertIn("extrato_itau_processado", nome_saida)
+        self.assertIn("PROC.xlsx", nome_saida)
         self.assertIsNotNone(excel_out.getvalue())
 
         # Verifica se as colunas Crédito e Débito foram geradas corretamente
