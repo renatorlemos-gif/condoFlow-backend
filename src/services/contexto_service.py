@@ -42,10 +42,12 @@ class ContextoService:
                 prompt = (
                     f"Sintetize uma definicao inicial de contexto para a conta contabil descrita por '{conta_descricao}' "
                     f"baseada no seguinte historico/despesa: '{novo_descritivo}'. "
-                    f"Sintetize um texto explicativo da finalidade contabil e do escopo da conta. "
+                    f"Sintetize um texto explicativo da finalidade contabil e do escopo da conta em 1 ou 2 frases curtas. "
+                    f"O texto DEVE ter estritamente entre 80 e 140 caracteres. "
+                    f"PROIBICAO TAXATIVA: E terminantemente proibido utilizar termos genericos e abrangentes como 'despesas operacionais gerais', 'servicos diversos', 'manutencao predial ampla', 'gastos rotineiros' ou 'taxas administrativas' que causem intersecao semantica com outras contas. "
                     f"REGRA CRITICA: Voce deve GENERALIZAR o conteudo. NUNCA inclua nomes proprios de funcionarios, numeros de documentos, pedidos, notas fiscais ou datas. "
                     f"Abstraia dados especificos para termos corporativos (ex: de 'Fabiano Gomes' para 'colaboradores', de 'pedido 8927' para 'taxas operacionais'). "
-                    f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o contexto sintetizado, sem introducoes."
+                    f"Retorne apenas o contexto sintetizado, sem introducoes."
                 )
                 resp = client.models.generate_content(
                     model="gemini-3.1-flash-lite",
@@ -105,19 +107,23 @@ class ContextoService:
                 prompt = (
                     f"Incorpore a NATUREZA CONTABIL desta nova despesa/historico: '{novo_descritivo}' "
                     f"ao contexto geral desta conta contabil: '{contexto_atual}'. "
-                    f"Sintetize um texto explicativo da finalidade e do escopo da conta. "
+                    f"Sintetize um texto explicativo da finalidade e do escopo da conta em 1 ou 2 frases curtas. "
+                    f"O texto DEVE ter estritamente entre 80 e 140 caracteres. "
+                    f"PROIBICAO TAXATIVA: E terminantemente proibido utilizar termos genericos e abrangentes como 'despesas operacionais gerais', 'servicos diversos', 'manutencao predial ampla', 'gastos rotineiros' ou 'taxas administrativas' que causem intersecao semantica com outras contas. "
                     f"REGRA CRITICA: Voce deve GENERALIZAR o conteudo. ESTRITAMENTE PROIBIDO incluir nomes proprios, CPFs, numeros de recibos/pedidos ou datas. "
                     f"Substitua referencias especificas por categorias abrangentes (ex: de 'Mais Mobi' para 'fornecedores', de 'Ricardo Santana' para 'folha de pagamento'). "
-                    f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o novo contexto consolidado, sem introducoes."
+                    f"Retorne apenas o novo contexto consolidado, sem introducoes."
                 )
             else:
                 prompt = (
                     f"Sintetize uma definicao inicial de contexto para a conta contabil descrita por '{conta_descricao}' "
                     f"baseada no seguinte historico/despesa: '{novo_descritivo}'. "
-                    f"Sintetize um texto explicativo da finalidade contabil e do escopo da conta. "
+                    f"Sintetize um texto explicativo da finalidade contabil e do escopo da conta em 1 ou 2 frases curtas. "
+                    f"O texto DEVE ter estritamente entre 80 e 140 caracteres. "
+                    f"PROIBICAO TAXATIVA: E terminantemente proibido utilizar termos genericos e abrangentes como 'despesas operacionais gerais', 'servicos diversos', 'manutencao predial ampla', 'gastos rotineiros' ou 'taxas administrativas' que causem intersecao semantica com outras contas. "
                     f"REGRA CRITICA: Voce deve GENERALIZAR o conteudo. NUNCA inclua nomes proprios de funcionarios, numeros de documentos, pedidos, notas fiscais ou datas. "
                     f"Abstraia dados especificos para termos corporativos (ex: de 'Fabiano Gomes' para 'colaboradores', de 'pedido 8927' para 'taxas operacionais'). "
-                    f"O texto DEVE ter entre 250 e 350 caracteres. Retorne apenas o contexto sintetizado, sem introducoes."
+                    f"Retorne apenas o contexto sintetizado, sem introducoes."
                 )
 
             resp = client.models.generate_content(

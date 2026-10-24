@@ -125,8 +125,8 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                     sucesso, contexto_gerado = ContextoService.atualizar_contexto(supabase, str(admin_id), str(conta), desc_join, grupo_data.get("conta_descricao", "Nova Conta"))
                     
                     # Atualiza processado_ia
+                    ids_to_update = grupo_data.get("ids", [])
                     if sucesso:
-                        ids_to_update = grupo_data["ids"]
                         if ids_to_update:
                             for chunk_i in range(0, len(ids_to_update), 50):
                                 chunk_ids = ids_to_update[chunk_i:chunk_i+50]
@@ -138,7 +138,13 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                             "contexto": contexto_gerado
                         })
                     else:
-                        erros += 1
+                        # Descarte legítimo pelo gatekeeper (similaridade > 0.85). Não é erro!
+                        # Marca lançamentos como processados para evitar reprocessamento infinito.
+                        if ids_to_update:
+                            for chunk_i in range(0, len(ids_to_update), 50):
+                                chunk_ids = ids_to_update[chunk_i:chunk_i+50]
+                                supabase.table("balancetes_historicos").update({"processado_ia": True}).in_("id", chunk_ids).execute()
+                        logger.info(f"[Balancete] Conta {conta} mantida pelo gatekeeper de cosseno (> 0.85). Registros marcados como processados sem erro.")
                 except Exception as e:
                     logger.error(f"Erro ao processar conta {conta}: {e}")
                     erros += 1

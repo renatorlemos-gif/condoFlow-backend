@@ -348,7 +348,7 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
     # Verifica que o despesa existe e está no estado certo
     result = (
         supabase.table("despesas")
-        .select("id, status, condominio_id, administradora_id")
+        .select("id, status, condominio_id, administradora_id, sugestao_contabil")
         .eq("id", despesa_id)
         .single()
         .execute()
@@ -417,9 +417,10 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
             )
             
         admin_id = doc.get("administradora_id")
+        codigo_confirmado = None
         if admin_id:
             conta_result = (
-                supabase.table("plano_contas").select("id").eq("id", payload.conta_despesa_id).eq("administradora_id", admin_id)
+                supabase.table("plano_contas").select("id, codigo_contabil").eq("id", payload.conta_despesa_id).eq("administradora_id", admin_id)
                 .execute()
             )
             if not conta_result.data:
@@ -427,6 +428,14 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
                     status_code=400,
                     detail="A conta contábil fornecida não pertence ao plano de contas atual."
                 )
+            codigo_confirmado = conta_result.data[0].get("codigo_contabil")
+        else:
+            conta_result = (
+                supabase.table("plano_contas").select("id, codigo_contabil").eq("id", payload.conta_despesa_id)
+                .execute()
+            )
+            if conta_result.data:
+                codigo_confirmado = conta_result.data[0].get("codigo_contabil")
 
         update = {
             "status":          "validado",
@@ -465,14 +474,35 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
         desc_doc = payload.descricao or ""
         conta_despesa_id = payload.conta_despesa_id
         
+        # Inspeciona sugestao da IA
+        sugestao = doc.get("sugestao_contabil") or {}
+        if isinstance(sugestao, str):
+            import json
+            try:
+                sugestao = json.loads(sugestao)
+            except Exception:
+                sugestao = {}
+        conta_sugerida_codigo = sugestao.get("conta_debito_codigo") if isinstance(sugestao, dict) else None
+
+        # Condicao estrita para disparo do aprendizado
+        houve_troca_manual = (
+            (codigo_confirmado and conta_sugerida_codigo and str(codigo_confirmado).strip() != str(conta_sugerida_codigo).strip())
+            or (not conta_sugerida_codigo)
+        )
+
         if admin_id and desc_doc:
-            # Dispara background task para o aprendizado contínuo
-            background_tasks.add_task(
-                _aprender_com_validacao,
-                admin_id=admin_id,
-                conta_despesa_id=conta_despesa_id,
-                contexto_despesa=desc_doc
-            )
+            if houve_troca_manual:
+                # Dispara background task para o aprendizado contínuo
+                background_tasks.add_task(
+                    _aprender_com_validacao,
+                    admin_id=admin_id,
+                    conta_despesa_id=conta_despesa_id,
+                    contexto_despesa=desc_doc
+                )
+            else:
+                import logging
+                logger = logging.getLogger("validacao_router")
+                logger.info(f"[Validacao] Conta confirmada coincide com sugestao ({codigo_confirmado}). Aprendizado dispensado.")
 
     return ValidacaoResponse(ok=True, id=despesa_id, status=novo_status)
 
