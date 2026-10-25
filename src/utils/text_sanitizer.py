@@ -355,7 +355,7 @@ def limpar_documento_sem_numero(text: str, numero_doc: str | None = None) -> str
         return text
 
     # 1. Normaliza menção a conf. recibo.
-    text = re.sub(r'\bconf\.?\s*recibo\.?', 'conf. recibo.', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bconf\.?\s*recibo\.?', 'conf. recibo', text, flags=re.IGNORECASE)
 
     # 2. Remove qualquer "null", "none", "undefined" solto ou acompanhado de doc
     # Ex: "DOC nº null", "Doc nº null", "Danfe null", "NFSe null"
@@ -381,7 +381,7 @@ def limpar_documento_sem_numero(text: str, numero_doc: str | None = None) -> str
     text = re.sub(r'\bDOC\s*no\b', 'Doc nº', text)
 
     # Garante conf. recibo. em minúsculas
-    text = re.sub(r'\bconf\.?\s*recibo\.?', 'conf. recibo.', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bconf\.?\s*recibo\.?', 'conf. recibo', text, flags=re.IGNORECASE)
 
     # Limpa espaços múltiplos
     text = re.sub(r'\s{2,}', ' ', text)
@@ -470,5 +470,13 @@ def sanitize_descricao(text: str | None, numero_doc: str | None = None, nome_for
     com_ltda = garantir_ltda_antes_do_documento(final_text, nome_fornecedor=nome_fornecedor)
     # Limpeza final para garantir que Doc nº ou tipos soltos não fiquem sem número
     limpo = limpar_documento_sem_numero(com_ltda, numero_doc=numero_doc)
-    return limitar_tamanho_80(limpo)
+    sufixos_validos = ("s.a.", "s/a.", "inc.", "cia.")
+    while limpo.endswith(".") and not any(limpo.lower().endswith(s) for s in sufixos_validos):
+        limpo = limpo[:-1].rstrip()
+
+    limpo = limitar_tamanho_80(limpo)
+    while limpo.endswith(".") and not any(limpo.lower().endswith(s) for s in sufixos_validos):
+        limpo = limpo[:-1].rstrip()
+
+    return limpo
 

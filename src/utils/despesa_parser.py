@@ -119,7 +119,7 @@ com atenção:
       - SE HOUVER número de documento: "{Fornecedor} {Tipo} {Número}". O tipo de documento deve usar estritamente as grafias "Danfe", "NFSe", "NFe" ou "Doc nº" (NUNCA "DOC nº" em maiúsculo). Em sociedades limitadas, a terminação "Ltda" faz parte do nome e deve constar antes do tipo: "{Fornecedor} Ltda {Tipo} {Número}" (Exemplos: "LCM Santos Comércio Atacadista Ltda Danfe 775", "Casa das Bombas Ltda Danfe 31303", "Cmd Gestão e Serviços Ltda NFSe 15").
       - SE NÃO HOUVER número de documento (numero_despesa for null): retorne APENAS o nome do fornecedor com "Ltda" (se aplicável): "{Fornecedor}". O tipo de documento só deve aparecer se acompanhado do respectivo número.
   (2) Serviços/PF: "{Nome da pessoa} ref. {descrição resumida}".
-  (3) Recibos: Quando a despesa for recibo avulso ou prestação de serviços sem nota fiscal, inclua ao final: "conf. recibo." (ex: "{Nome} ref. {serviço} conf. recibo." ou "{Fornecedor} conf. recibo.").
+  (3) Recibos: Quando a despesa for recibo avulso ou prestação de serviços sem nota fiscal, inclua ao final: "conf. recibo" (ex: "{Nome} ref. {serviço} conf. recibo" ou "{Fornecedor} conf. recibo"). NUNCA termine a descrição com ponto final ('.'), exceto se fizer parte de sufixo empresarial como 'S.A.'.
   (4) Parcelamentos: Adicione " - parcela X/Y" se aplicável.
 - chave_acesso: Apenas os 44 dígitos numéricos contínuos da Nota Fiscal Eletrônica (NF-e/NFC-e/CT-e), SEM ESPAÇOS e sem pontuação. Se o documento não possuir chave de acesso com 44 dígitos, retorne null.
 - REGRA 9 (COMPETÊNCIA): Formato MM/YYYY. Faça uma BUSCA EXAUSTIVA por menções expressas da data/período de execução do serviço ou compra no corpo do texto (ex: "ref. ao mês de", "competência"). Apenas se não encontrar, use a data de emissão. E como último recurso absoluto, a data de pagamento. NUNCA DEVE FICAR NULA.
@@ -149,7 +149,8 @@ com atenção:
                     description=(
                         "Descrição em Sentence Case com histórico contábil conciso. "
                         "Se for empresa Ltda, manter 'Ltda' antes de Danfe/NFSe (ex: 'LCM Santos Comércio Atacadista Ltda Danfe 775'). "
-                        "Recibos avulsos: finalizar com 'conf. recibo.'. NUNCA usar 'null'."
+                        "Recibos avulsos: finalizar com 'conf. recibo' (sem ponto no final). NUNCA usar 'null'. "
+                        "Nenhuma frase ou descrição termina com ponto final, salvo sufixos como 'S.A.'."
                     ),
                 ),
                 "contexto_sintetizado": types.Schema(
