@@ -48,8 +48,8 @@ class TestV155BloqueioDataPagamento(unittest.IsolatedAsyncioTestCase):
                 await _validar_despesa_impl("desp-155-01", payload, bg_tasks)
 
             self.assertEqual(ctx.exception.status_code, 422)
-            self.assertIn("A data de pagamento (2026-10-02) não pertence à competência ativa (2026-09)", ctx.exception.detail)
-            self.assertIn("Exclua a despesa desta competência para processá-la no mês correto", ctx.exception.detail)
+            self.assertIn("A data de pagamento (02/10/2026) está fora do período em processamento (2026-09)", ctx.exception.detail)
+            self.assertIn("Ajuste a data de pagamento para este mês ou exclua a despesa desta pasta mensal para aguardar o fechamento do mês seguinte.", ctx.exception.detail)
 
     async def test_cenario03_data_pagamento_anterior_a_competencia_retorna_422(self):
         """Cenário 03: Data de pagamento anterior ao mês ativo (ex: 2026-08-30 em 2026-09) retorna HTTP 422."""
@@ -69,7 +69,7 @@ class TestV155BloqueioDataPagamento(unittest.IsolatedAsyncioTestCase):
                 await _validar_despesa_impl("desp-155-01", payload, bg_tasks)
 
             self.assertEqual(ctx.exception.status_code, 422)
-            self.assertIn("A data de pagamento (2026-08-30) não pertence à competência ativa (2026-09)", ctx.exception.detail)
+            self.assertIn("A data de pagamento (30/08/2026) está fora do período em processamento (2026-09)", ctx.exception.detail)
 
     async def test_cenario02_acao_salvar_com_data_divergente_tambem_bloqueia_422(self):
         """Cenário 02: Ação 'salvar' também bloqueia e retorna 422 quando data_pagamento diverge da competência ativa."""
@@ -87,7 +87,7 @@ class TestV155BloqueioDataPagamento(unittest.IsolatedAsyncioTestCase):
                 await _validar_despesa_impl("desp-155-01", payload, bg_tasks)
 
             self.assertEqual(ctx.exception.status_code, 422)
-            self.assertIn("2026-10-05", ctx.exception.detail)
+            self.assertIn("05/10/2026", ctx.exception.detail)
             self.assertIn("2026-09", ctx.exception.detail)
 
     async def test_cenario06_data_dentro_da_competencia_sucesso_retorna_200(self):

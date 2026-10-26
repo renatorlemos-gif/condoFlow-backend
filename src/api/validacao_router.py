@@ -150,7 +150,12 @@ async def listar_despesas(
             _, ultimo_dia = calendar.monthrange(ano, mes)
             inicio = f"{mes_ano_formatado}-01"
             fim = f"{mes_ano_formatado}-{ultimo_dia:02d}"
-            filtro_or = f"and(data_pagamento.gte.{inicio},data_pagamento.lte.{fim}),and(data_pagamento.is.null,data_emissao.gte.{inicio},data_emissao.lte.{fim})"
+            # v1.56: Garante visibilidade de despesas não validadas mesmo com data fora do mês ativo
+            filtro_or = (
+                f"and(data_pagamento.gte.{inicio},data_pagamento.lte.{fim}),"
+                f"and(data_pagamento.is.null,data_emissao.gte.{inicio},data_emissao.lte.{fim}),"
+                f"status.in.(extraido,pendente,extraindo,erro)"
+            )
             query = query.or_(filtro_or)
 
     if status != "todos":
@@ -421,11 +426,12 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
                 dt_fim = date(ano_comp, mes_comp, ultimo_dia)
 
                 if not (dt_inicio <= dt_pgto <= dt_fim):
+                    data_br = dt_pgto.strftime("%d/%m/%Y")
                     raise HTTPException(
                         status_code=422,
                         detail=(
-                            f"A data de pagamento ({payload.data_pagamento}) não pertence à competência ativa ({payload.mes_ano}). "
-                            f"Exclua a despesa desta competência para processá-la no mês correto."
+                            f"A data de pagamento ({data_br}) está fora do período em processamento ({payload.mes_ano}). "
+                            f"Ajuste a data de pagamento para este mês ou exclua a despesa desta pasta mensal para aguardar o fechamento do mês seguinte."
                         )
                     )
         except HTTPException:
