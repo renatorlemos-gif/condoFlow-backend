@@ -401,43 +401,44 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
             detail=f"Despesa com status '{doc['status']}' não pode ser validado.",
         )
 
-    # Validação de consistência temporal com a competência ativa (v1.55)
-    if payload.data_pagamento and payload.mes_ano and str(payload.mes_ano).strip():
-        try:
-            dt_pgto = datetime.strptime(str(payload.data_pagamento).split("T")[0], "%Y-%m-%d").date()
-            mes_ano_str = str(payload.mes_ano).strip()
-            ano_comp = None
-            mes_comp = None
-            if "-" in mes_ano_str:
-                partes = mes_ano_str.split("-")
-                if len(partes) == 2 and partes[0].isdigit() and partes[1].isdigit():
-                    ano_comp, mes_comp = int(partes[0]), int(partes[1])
-            elif "/" in mes_ano_str:
-                partes = mes_ano_str.split("/")
-                if len(partes) == 2:
-                    if len(partes[0].strip()) == 4:
+    # Validação de consistência temporal com a competência ativa (v1.55 / v1.57: Exclusiva para confirmação)
+    if payload.acao == "confirmar":
+        if payload.data_pagamento and payload.mes_ano and str(payload.mes_ano).strip():
+            try:
+                dt_pgto = datetime.strptime(str(payload.data_pagamento).split("T")[0], "%Y-%m-%d").date()
+                mes_ano_str = str(payload.mes_ano).strip()
+                ano_comp = None
+                mes_comp = None
+                if "-" in mes_ano_str:
+                    partes = mes_ano_str.split("-")
+                    if len(partes) == 2 and partes[0].isdigit() and partes[1].isdigit():
                         ano_comp, mes_comp = int(partes[0]), int(partes[1])
-                    else:
-                        mes_comp, ano_comp = int(partes[0]), int(partes[1])
+                elif "/" in mes_ano_str:
+                    partes = mes_ano_str.split("/")
+                    if len(partes) == 2:
+                        if len(partes[0].strip()) == 4:
+                            ano_comp, mes_comp = int(partes[0]), int(partes[1])
+                        else:
+                            mes_comp, ano_comp = int(partes[0]), int(partes[1])
 
-            if ano_comp and mes_comp and 1 <= mes_comp <= 12:
-                _, ultimo_dia = calendar.monthrange(ano_comp, mes_comp)
-                dt_inicio = date(ano_comp, mes_comp, 1)
-                dt_fim = date(ano_comp, mes_comp, ultimo_dia)
+                if ano_comp and mes_comp and 1 <= mes_comp <= 12:
+                    _, ultimo_dia = calendar.monthrange(ano_comp, mes_comp)
+                    dt_inicio = date(ano_comp, mes_comp, 1)
+                    dt_fim = date(ano_comp, mes_comp, ultimo_dia)
 
-                if not (dt_inicio <= dt_pgto <= dt_fim):
-                    data_br = dt_pgto.strftime("%d/%m/%Y")
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"A data de pagamento ({data_br}) está fora do período em processamento ({payload.mes_ano}). "
-                            f"Ajuste a data de pagamento para este mês ou exclua a despesa desta pasta mensal para aguardar o fechamento do mês seguinte."
+                    if not (dt_inicio <= dt_pgto <= dt_fim):
+                        data_br = dt_pgto.strftime("%d/%m/%Y")
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"A data de pagamento ({data_br}) está fora do período em processamento ({payload.mes_ano}). "
+                                f"Ajuste a data de pagamento para este mês ou exclua a despesa desta pasta mensal para aguardar o fechamento do mês seguinte."
+                            )
                         )
-                    )
-        except HTTPException:
-            raise
-        except (ValueError, TypeError):
-            pass  # Se formato de data ou mes_ano for inconsistente, prossegue sem quebra indevida
+            except HTTPException:
+                raise
+            except (ValueError, TypeError):
+                pass  # Se formato de data ou mes_ano for inconsistente, prossegue sem quebra indevida
 
     if payload.acao == "salvar":
         update = {

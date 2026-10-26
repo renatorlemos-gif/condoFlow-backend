@@ -101,7 +101,14 @@ class DespesaParser:
 despesa fiscal (nota fiscal, recibo, folha de pagamento, fatura) seguindo estas regras
 com atenção:
 
-- REGRA 1 (PREVALÊNCIA DE PAGAMENTO - REGIME DE CAIXA): O condomínio opera sob Regime de Caixa. QUALQUER comprovação de pagamento (Pix, TED, recibo assinado, boleto quitado, CUPOM FISCAL) PREVALECE SEMPRE sobre a Nota Fiscal para data ('data_pagamento') e valor ('valor_total_bruto'). A Nota Fiscal só é usada para data e valor em último caso absoluto, quando não houver NENHUMA comprovação de pagamento no arquivo.
+- REGRA 1 (PREVALÊNCIA TOTAL DO COMPROVANTE DE PAGAMENTO - REGIME DE CAIXA):
+  (1) PREVALÊNCIA TOTAL DO COMPROVANTE: O condomínio opera sob Regime de Caixa. A 'data_pagamento' e o 'valor_total_bruto' SEMPRE prevalecem pelos dados contidos no COMPROVANTE DE PAGAMENTO (Pix, TED/DOC, transferência entre contas, autenticação mecânica bancária de caixa/agência, boleto quitado, recibo assinado com quitação, débito automático em conta corrente ou comprovante de Internet Banking).
+  (2) BUSCA MULTIPÁGINA EXAUSTIVA: O comprovante de pagamento pode estar em QUALQUER página do documento (página 1, página 2, página 3, ou anexo no final do arquivo PDF). Você DEVE examinar TODAS as páginas procurando comprovantes bancários.
+  (3) ATENÇÃO CRÍTICA AO ANO: Verifique com extremo rigor o ANO do pagamento no comprovante (ex: pagamentos realizados em 2026 NUNCA devem ser extraídos como 2025).
+  (4) NÃO CONFUNDIR COM PERÍODOS DE CONSUMO OU LEITURA: Em faturas de concessionárias (energia elétrica, água/esgoto, gás, telefone/internet), NUNCA use a data de leitura, ciclo de faturamento ou período de apuração/consumo como 'data_pagamento'.
+  (5) REGRA DE FALLBACK MANDATÓRIO ESTRITO: Somente quando NÃO HOUVER NENHUM COMPROVANTE DE PAGAMENTO no arquivo, a 'data_pagamento' DEVE ASSUMIR A DATA DE EMISSÃO FISCAL ('data_emissao'). É TERMINANTEMENTE PROIBIDO assumir a data de vencimento ('data_vencimento') ou períodos de uso/faturamento no campo 'data_pagamento'. A data de vencimento é uma previsão futura e não representa pagamento no Regime de Caixa.
+- DATA DE EMISSÃO ('data_emissao'): Data oficial de emissão fiscal do documento (data da NF-e, Danfe, NFS-e, cupom fiscal, data do recibo assinado ou data de emissão impressa na fatura). Formato YYYY-MM-DD.
+- DATA DE VENCIMENTO ('data_vencimento'): Data limite de vencimento do boleto bancário ou fatura. Formato YYYY-MM-DD. JAMAIS use esta data no campo 'data_pagamento'.
 - valor_total_bruto: o VALOR TOTAL A PAGAR efetivamente desembolsado. Retorne EXATAMENTE como impresso (ex: "105.900,00"), sem converter ou fazer contas. NÃO confunda com valor unitário, total de item, "valor total dos produtos", bases/impostos ICMS/IPI/ISS (aplicável quando cair no fallback da NF).
   REGRA MANDATÓRIA PARA DEMONSTRATIVO DE PAGAMENTO / HOLERITE / RECIBO SALARIAL: Em documentos do tipo demonstrativo de pagamento, folha de pagamento, holerite ou recibo (Salários, Adiantamentos, Férias, 13º Salário, Rescisões), o valor procurado DEVE SER OBRIGATORIAMENTE O "VALOR LÍQUIDO" (o valor líquido a receber pelo colaborador). NUNCA utilize o total bruto de proventos, total de descontos ou bases de INSS/FGTS.
 - Datas sempre no formato YYYY-MM-DD.
@@ -137,9 +144,16 @@ com atenção:
                     description="Razão Social ou Nome Fantasia completo. Se for empresa limitada, DEVE conter 'Ltda'. Title Case. NUNCA caixa alta. Acentuação pt-BR obrigatória."
                 ),
                 "numero_despesa": types.Schema(type=types.Type.STRING, description="Número da Nota Fiscal ou Recibo"),
-                "data_emissao": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
-                "data_vencimento": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
-                "data_pagamento": types.Schema(type=types.Type.STRING, description="Data no formato YYYY-MM-DD"),
+                "data_emissao": types.Schema(type=types.Type.STRING, description="Data oficial de emissão do documento fiscal ou recibo. Formato YYYY-MM-DD."),
+                "data_vencimento": types.Schema(type=types.Type.STRING, description="Data limite de vencimento do boleto ou fatura. Formato YYYY-MM-DD. NUNCA copiar para data_pagamento."),
+                "data_pagamento": types.Schema(
+                    type=types.Type.STRING,
+                    description=(
+                        "Data do efetivo pagamento contida no comprovante bancário (Pix, TED, autenticação mecânica) em qualquer página do documento. "
+                        "Se não houver nenhum comprovante, preencher OBRIGATORIAMENTE com a data de emissão fiscal. "
+                        "NUNCA utilizar a data de vencimento. Formato YYYY-MM-DD."
+                    )
+                ),
                 "valor_total_bruto": types.Schema(
                     type=types.Type.STRING,
                     description="Valor pago; em demonstrativos de pagamento de salários/adiantamento/férias, usar SEMPRE o Valor Líquido.",
@@ -292,9 +306,14 @@ com atenção:
 
         valor_processado = parse_valor_brl(bruto.valor_total_bruto) or 0.0
 
+        # v1.57: Garantia determinística de fallback de data_pagamento
+        data_pagamento_final = bruto.data_pagamento
+        if not data_pagamento_final or str(data_pagamento_final).lower().strip() in ("null", "none", ""):
+            data_pagamento_final = bruto.data_emissao
+
         comp = bruto.competencia
         if not comp or comp.strip() == "":
-            fallback_date = bruto.data_pagamento or bruto.data_emissao or bruto.data_vencimento
+            fallback_date = data_pagamento_final or bruto.data_emissao or bruto.data_vencimento
             if fallback_date and len(fallback_date) >= 7:
                 parts = fallback_date.split("-")
                 if len(parts) >= 2:
@@ -310,7 +329,7 @@ com atenção:
             numero_despesa=bruto.numero_despesa,
             data_emissao=bruto.data_emissao,
             data_vencimento=bruto.data_vencimento,
-            data_pagamento=bruto.data_pagamento,
+            data_pagamento=data_pagamento_final,
             valor_total=valor_processado,
             descricao=sanitize_descricao(bruto.descricao, numero_doc=bruto.numero_despesa, nome_fornecedor=fornec_limpo),
             contexto_sintetizado=sanitize_descricao(bruto.contexto_sintetizado, numero_doc=bruto.numero_despesa, nome_fornecedor=fornec_limpo),

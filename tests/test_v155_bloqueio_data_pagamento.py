@@ -71,8 +71,8 @@ class TestV155BloqueioDataPagamento(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.exception.status_code, 422)
             self.assertIn("A data de pagamento (30/08/2026) está fora do período em processamento (2026-09)", ctx.exception.detail)
 
-    async def test_cenario02_acao_salvar_com_data_divergente_tambem_bloqueia_422(self):
-        """Cenário 02: Ação 'salvar' também bloqueia e retorna 422 quando data_pagamento diverge da competência ativa."""
+    async def test_cenario02_acao_salvar_com_data_divergente_permite_salvar_v157(self):
+        """Cenário 02 (atualizado v1.57): Ação 'salvar' NÃO bloqueia com 422, permitindo edição de rascunho."""
         supabase_mock = self._setup_mock_despesa()
         bg_tasks = BackgroundTasks()
 
@@ -83,12 +83,9 @@ class TestV155BloqueioDataPagamento(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch("src.api.validacao_router._get_supabase", return_value=supabase_mock):
-            with self.assertRaises(HTTPException) as ctx:
-                await _validar_despesa_impl("desp-155-01", payload, bg_tasks)
-
-            self.assertEqual(ctx.exception.status_code, 422)
-            self.assertIn("05/10/2026", ctx.exception.detail)
-            self.assertIn("2026-09", ctx.exception.detail)
+            res = await _validar_despesa_impl("desp-155-01", payload, bg_tasks)
+            self.assertTrue(res.ok)
+            self.assertEqual(res.status, "extraido")
 
     async def test_cenario06_data_dentro_da_competencia_sucesso_retorna_200(self):
         """Cenário 06: Data de pagamento dentro do intervalo do mês ativo (ex: 2026-09-15) processa com sucesso."""
