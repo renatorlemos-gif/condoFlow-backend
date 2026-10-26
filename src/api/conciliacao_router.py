@@ -176,7 +176,7 @@ async def listar_transacoes(
     banco: str | None = None,
     apenas_pendentes: bool = True,
     grupos: list[str] = Query(default=[]),
-    limit: int = 100,
+    limit: int = 500,
 ):
     supabase = _get_supabase()
 
@@ -326,7 +326,7 @@ async def despesas_disponiveis(q: str | None = None):
         .select("id, fornecedor, numero_doc, data_emissao, valor_total, descricao")
         .eq("status", "validado")
         .order("data_emissao", desc=True)
-        .limit(200)
+        .limit(500)
         .execute()
         .data or []
     )
