@@ -8,8 +8,9 @@ GET  /api/v1/validacao/despesas/{id}     — detalhe + URL assinada da foto
 PATCH /api/v1/validacao/despesas/{id}    — salva correções + confirma/rejeita
 """
 
+import calendar
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
@@ -87,6 +88,7 @@ class ValidacaoPayload(BaseModel):
     descricao: str | None = None
     chave_acesso: str | None = None
     competencia: str | None = None
+    mes_ano: str | None = None  # v1.55: Competência ativa do contexto de validação
     fonte_pagadora_id: str | None = None
     conta_despesa_id: Optional[str] = None
 
@@ -104,10 +106,11 @@ class ValidacaoResponse(BaseModel):
 async def listar_despesas(
     status: str = "extraido",
     condominio_id: str | None = None,
+    mes_ano: str | None = None,
     limit: int = 500,
 ):
     """
-    Lista despesas fiscais filtrados por status.
+    Lista despesas fiscais filtrados por status, condomínio e competência (mes_ano).
     Padrão: status=extraido (prontos para validação).
     Passar status=todos retorna todos os registros.
     """
@@ -116,12 +119,39 @@ async def listar_despesas(
     query = (
         supabase.table("despesas")
         .select("id, filename, administradora_id, condominio_id, status, fornecedor, valor_total, data_emissao, data_pagamento, numero_doc, criado_em, extraido_em, competencia, fonte_pagadora_id, plano_contas!conta_despesa_id(codigo_contabil, descricao)")
-        .order("criado_em", desc=True)
-        .limit(limit)
     )
 
     if condominio_id:
         query = query.eq("condominio_id", condominio_id)
+
+    if mes_ano and mes_ano.strip():
+        mes_ano_str = mes_ano.strip()
+        ano = None
+        mes = None
+        if "/" in mes_ano_str:
+            partes = mes_ano_str.split("/")
+            if len(partes) == 2:
+                p0, p1 = partes[0].strip(), partes[1].strip()
+                if len(p0) == 4 and p0.isdigit() and p1.isdigit():
+                    ano, mes = int(p0), int(p1)
+                elif len(p1) == 4 and p1.isdigit() and p0.isdigit():
+                    mes, ano = int(p0), int(p1)
+        elif "-" in mes_ano_str:
+            partes = mes_ano_str.split("-")
+            if len(partes) == 2:
+                p0, p1 = partes[0].strip(), partes[1].strip()
+                if len(p0) == 4 and p0.isdigit() and p1.isdigit():
+                    ano, mes = int(p0), int(p1)
+                elif len(p1) == 4 and p1.isdigit() and p0.isdigit():
+                    mes, ano = int(p0), int(p1)
+
+        if ano and mes and 1 <= mes <= 12:
+            mes_ano_formatado = f"{ano:04d}-{mes:02d}"
+            _, ultimo_dia = calendar.monthrange(ano, mes)
+            inicio = f"{mes_ano_formatado}-01"
+            fim = f"{mes_ano_formatado}-{ultimo_dia:02d}"
+            filtro_or = f"and(data_pagamento.gte.{inicio},data_pagamento.lte.{fim}),and(data_pagamento.is.null,data_emissao.gte.{inicio},data_emissao.lte.{fim})"
+            query = query.or_(filtro_or)
 
     if status != "todos":
         if "," in status:
@@ -129,6 +159,8 @@ async def listar_despesas(
             query = query.in_("status", statuses)
         else:
             query = query.eq("status", status)
+
+    query = query.order("data_pagamento", desc=True).order("criado_em", desc=True).limit(limit)
 
     result = query.execute()
     docs = result.data or []
@@ -363,6 +395,43 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
             status_code=400,
             detail=f"Despesa com status '{doc['status']}' não pode ser validado.",
         )
+
+    # Validação de consistência temporal com a competência ativa (v1.55)
+    if payload.data_pagamento and payload.mes_ano and str(payload.mes_ano).strip():
+        try:
+            dt_pgto = datetime.strptime(str(payload.data_pagamento).split("T")[0], "%Y-%m-%d").date()
+            mes_ano_str = str(payload.mes_ano).strip()
+            ano_comp = None
+            mes_comp = None
+            if "-" in mes_ano_str:
+                partes = mes_ano_str.split("-")
+                if len(partes) == 2 and partes[0].isdigit() and partes[1].isdigit():
+                    ano_comp, mes_comp = int(partes[0]), int(partes[1])
+            elif "/" in mes_ano_str:
+                partes = mes_ano_str.split("/")
+                if len(partes) == 2:
+                    if len(partes[0].strip()) == 4:
+                        ano_comp, mes_comp = int(partes[0]), int(partes[1])
+                    else:
+                        mes_comp, ano_comp = int(partes[0]), int(partes[1])
+
+            if ano_comp and mes_comp and 1 <= mes_comp <= 12:
+                _, ultimo_dia = calendar.monthrange(ano_comp, mes_comp)
+                dt_inicio = date(ano_comp, mes_comp, 1)
+                dt_fim = date(ano_comp, mes_comp, ultimo_dia)
+
+                if not (dt_inicio <= dt_pgto <= dt_fim):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"A data de pagamento ({payload.data_pagamento}) não pertence à competência ativa ({payload.mes_ano}). "
+                            f"Exclua a despesa desta competência para processá-la no mês correto."
+                        )
+                    )
+        except HTTPException:
+            raise
+        except (ValueError, TypeError):
+            pass  # Se formato de data ou mes_ano for inconsistente, prossegue sem quebra indevida
 
     if payload.acao == "salvar":
         update = {

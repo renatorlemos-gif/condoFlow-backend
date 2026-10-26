@@ -138,13 +138,13 @@ async def processar_regras(request: ProcessarRegrasRequest = None):
                             "contexto": contexto_gerado
                         })
                     else:
-                        # Descarte legítimo pelo gatekeeper (similaridade > 0.70). Não é erro!
+                        # Descarte legítimo pelo gatekeeper (similaridade > 0.65). Não é erro!
                         # Marca lançamentos como processados para evitar reprocessamento infinito.
                         if ids_to_update:
                             for chunk_i in range(0, len(ids_to_update), 50):
                                 chunk_ids = ids_to_update[chunk_i:chunk_i+50]
                                 supabase.table("balancetes_historicos").update({"processado_ia": True}).in_("id", chunk_ids).execute()
-                        logger.info(f"[Balancete] Conta {conta} mantida pelo gatekeeper de cosseno (> 0.70). Registros marcados como processados sem erro.")
+                        logger.info(f"[Balancete] Conta {conta} mantida pelo gatekeeper de cosseno (> 0.65). Registros marcados como processados sem erro.")
                 except Exception as e:
                     logger.error(f"Erro ao processar conta {conta}: {e}")
                     erros += 1
