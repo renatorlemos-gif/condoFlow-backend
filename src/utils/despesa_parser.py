@@ -183,8 +183,8 @@ com atenção:
             },
         )
 
-        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.5-flash-lite")
-        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-flash-lite-latest")
+        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.5-flash")
+        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-3.5-flash-lite")
         model_tertiary = "gemini-3-flash-preview"
         
         modelo_atual = model_primary
