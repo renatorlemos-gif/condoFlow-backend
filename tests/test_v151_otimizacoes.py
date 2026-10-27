@@ -77,8 +77,8 @@ class TestV151OtimizacoesBackend(unittest.TestCase):
 
             dados, h = asyncio.run(parser.parse_despesa(fake_file))
 
-            self.assertEqual(models_called[0], "gemini-3.5-flash")
-            self.assertEqual(models_called[1], "gemini-3.5-flash-lite")
+            self.assertEqual(models_called[0], "gemini-3.5-flash-lite")
+            self.assertEqual(models_called[1], "gemini-flash-lite-latest")
             self.assertEqual(models_called[2], "gemini-3-flash-preview")
             self.assertEqual(dados.valor_total, 150.0)
 

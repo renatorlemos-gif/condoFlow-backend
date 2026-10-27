@@ -183,8 +183,8 @@ com atenção:
             },
         )
 
-        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.5-flash")
-        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-3.5-flash-lite")
+        model_primary = os.environ.get("GEMINI_MODEL_PRIMARY", "gemini-3.5-flash-lite")
+        model_fallback = os.environ.get("GEMINI_MODEL_FALLBACK", "gemini-flash-lite-latest")
         model_tertiary = "gemini-3-flash-preview"
         
         modelo_atual = model_primary
@@ -239,30 +239,30 @@ com atenção:
                 
                 if isinstance(e, APIError):
                     if e.code == 429:
-                        is_rpd = False
-                        if e.details:
-                            for detail in e.details:
-                                detail_str = str(detail).lower()
-                                if "perday" in detail_str or "per_day" in detail_str:
-                                    is_rpd = True
-                                    break
-                                    
+                        err_str = (str(e) + " " + str(getattr(e, "details", ""))).lower()
+                        is_rpd = any(t in err_str for t in ("perday", "per_day", "per day", "quota exceeded", "resource_exhausted"))
+                        
                         if is_rpd:
+                            logger.warning(
+                                f"Cota de requisições excedida no modelo '{modelo_atual}'. Failover imediato para fallback '{model_fallback}'."
+                            )
                             modelo_atual = model_fallback
                             continue
                         else:
                             delay = 10 + random.uniform(2, 8)
-                            if e.details:
-                                for detail in e.details:
-                                    if "retryDelay" in detail:
+                            if hasattr(e, "details") and isinstance(e.details, dict):
+                                err_dict = e.details.get("error", {})
+                                for item in err_dict.get("details", []):
+                                    if isinstance(item, dict) and "retryDelay" in item:
                                         try:
-                                            rd = detail["retryDelay"]
-                                            if isinstance(rd, str) and rd.endswith('s'):
+                                            rd = str(item["retryDelay"])
+                                            if rd.endswith("s"):
                                                 delay = float(rd[:-1])
-                                            elif isinstance(rd, (int, float)):
+                                            else:
                                                 delay = float(rd)
                                         except Exception:
                                             pass
+                            delay = min(delay, 30.0)
                             await asyncio.sleep(delay)
                     elif "503" in str(e) or e.code == 503:
                         if modelo_atual == model_primary:
