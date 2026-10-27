@@ -181,12 +181,16 @@ async def listar_despesas(
     # Map fontes_pagadoras
     fontes_ids = list(set([d.get("fonte_pagadora_id") for d in docs if d.get("fonte_pagadora_id")]))
     fontes_map = {}
+    fontes_cod_map = {}
+    fontes_desc_map = {}
     if fontes_ids:
         fontes_result = supabase.table("fontes_pagadoras").select("id, nome, plano_contas(codigo_contabil, descricao)").in_("id", fontes_ids).execute()
         for f in (fontes_result.data or []):
             pc = f.get("plano_contas") or {}
             cod = pc.get("codigo_contabil")
             desc = pc.get("descricao")
+            fontes_cod_map[f["id"]] = cod
+            fontes_desc_map[f["id"]] = desc or f.get("nome")
             if cod and desc:
                 fontes_map[f["id"]] = f"{cod} - {desc}"
             elif cod:
@@ -204,6 +208,8 @@ async def listar_despesas(
         # map conta_credora (which uses fonte_pagadora_id)
         f_id = d.get("fonte_pagadora_id")
         d["conta_codigo"] = None
+        d["conta_credora_codigo"] = fontes_cod_map.get(f_id) if f_id else None
+        d["conta_credora_nome"] = fontes_desc_map.get(f_id) if f_id else None
         d["conta_credora_descricao"] = fontes_map.get(f_id) if f_id else None
 
     return docs
