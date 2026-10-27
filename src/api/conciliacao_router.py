@@ -315,16 +315,25 @@ async def listar_transacoes(
 
 
 @router.get("/despesas-disponiveis", response_model=list[DespesaDisponivel])
-async def despesas_disponiveis(q: str | None = None):
+async def despesas_disponiveis(
+    q: str | None = None,
+    condominio_id: str | None = None,
+):
     supabase = _get_supabase()
 
     conc = supabase.table("conciliacoes").select("despesa_id").execute()
-    ids_conciliados = {c["despesa_id"] for c in (conc.data or [])}
+    ids_conciliados = {c["despesa_id"] for c in (conc.data or []) if c.get("despesa_id")}
 
-    docs = (
+    query = (
         supabase.table("despesas")
         .select("id, fornecedor, numero_doc, data_emissao, valor_total, descricao")
         .eq("status", "validado")
+    )
+    if condominio_id:
+        query = query.eq("condominio_id", condominio_id)
+
+    docs = (
+        query
         .order("data_emissao", desc=True)
         .limit(500)
         .execute()

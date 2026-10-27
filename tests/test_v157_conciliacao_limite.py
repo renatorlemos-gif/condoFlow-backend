@@ -64,3 +64,64 @@ class TestV157ConciliacaoLimite(unittest.TestCase):
         response = self.client.get("/api/v1/conciliacao/despesas-disponiveis")
         self.assertEqual(response.status_code, 200)
         mock_query.limit.assert_called_with(500)
+
+    @patch("src.api.conciliacao_router._get_supabase")
+    def test_despesas_disponiveis_filtra_por_condominio_id(self, mock_get_supabase):
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+
+        mock_query = self._build_mock_query(return_data=[])
+        mock_supabase.table.return_value = mock_query
+
+        condo_id = "9cc651ba-e20e-4bc1-8366-f4f0addfc28f"
+        response = self.client.get(f"/api/v1/conciliacao/despesas-disponiveis?condominio_id={condo_id}")
+        self.assertEqual(response.status_code, 200)
+        mock_query.eq.assert_any_call("condominio_id", condo_id)
+        mock_query.eq.assert_any_call("status", "validado")
+
+    @patch("src.api.conciliacao_router._get_supabase")
+    def test_despesas_disponiveis_isolamento_multi_tenant(self, mock_get_supabase):
+        """Garante que despesas de outro condomínio não vazam para o condomínio atual."""
+        mock_supabase = MagicMock()
+        mock_get_supabase.return_value = mock_supabase
+
+        condo_corrente = "9cc651ba-e20e-4bc1-8366-f4f0addfc28f"
+        doc_corrente = {
+            "id": "doc-1",
+            "condominio_id": condo_corrente,
+            "fornecedor": "Fornecedor Local",
+            "numero_doc": "123",
+            "data_emissao": "2026-09-10",
+            "valor_total": 150.00,
+            "descricao": "Serviço Local"
+        }
+
+        def mock_table(table_name):
+            if table_name == "conciliacoes":
+                q = MagicMock()
+                q.select.return_value = q
+                q.execute.return_value = MagicMock(data=[])
+                return q
+            elif table_name == "despesas":
+                q = MagicMock()
+                q.select.return_value = q
+                q.order.return_value = q
+                q.limit.return_value = q
+                def fake_eq(col, val):
+                    if col == "condominio_id" and val == condo_corrente:
+                        q.execute.return_value = MagicMock(data=[doc_corrente])
+                    elif col == "condominio_id" and val != condo_corrente:
+                        q.execute.return_value = MagicMock(data=[])
+                    return q
+                q.eq.side_effect = fake_eq
+                return q
+            return MagicMock()
+
+        mock_supabase.table.side_effect = mock_table
+
+        response = self.client.get(f"/api/v1/conciliacao/despesas-disponiveis?condominio_id={condo_corrente}")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], "doc-1")
+        self.assertEqual(data[0]["fornecedor"], "Fornecedor Local")
