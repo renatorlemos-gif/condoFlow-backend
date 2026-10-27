@@ -14,14 +14,14 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
     """
     df_raw = pd.read_excel(io.BytesIO(conteudo_bytes))
     
-    header_idx = 7
-    if header_idx >= len(df_raw):
-        header_idx = 0
-        for idx, row in df_raw.iterrows():
-            row_str = ' '.join([str(val) for val in row.values]).upper()
-            if 'DATA' in row_str and ('LAN' in row_str or 'HIST' in row_str):
-                header_idx = idx
-                break
+    header_idx = None
+    for idx, row in df_raw.iterrows():
+        row_str = ' '.join([str(val) for val in row.values]).upper()
+        if 'DATA' in row_str and ('LAN' in row_str or 'HIST' in row_str):
+            header_idx = idx
+            break
+    if header_idx is None:
+        header_idx = 7 if len(df_raw) > 7 else 0
 
     saldo_anterior = 0.0
     for idx in range(header_idx, min(header_idx + 5, len(df_raw))):
@@ -91,7 +91,7 @@ def processar_extrato_bradesco_bytes(conteudo_bytes: bytes, nome_arquivo: str = 
         if any(x in hist for x in ['RENTAB', 'INVEST']): return 'Rentabilidades'
         if any(x in hist for x in ['RESG/']): return 'Resgates'
         if any(x in hist for x in ['APLICACAO', 'APLIC/', 'APLIC ']): return 'Aplicações'
-        if any(x in hist for x in ['TARIFA', 'TAR ', 'IOF']): return 'Tarifas'
+        if any(x in hist for x in ['TARIFA', 'TAR ', 'TAR/', 'IOF', 'DOC/TED']): return 'Tarifas'
         if 'LIQUIDACAO DE COBRANCA' in hist: return 'Receitas'
         if cred > 0: return 'Outras Receitas'
         return 'Outros Gastos'
