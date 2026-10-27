@@ -83,6 +83,7 @@ class ExportadorService:
         import logging
         logger = logging.getLogger("exportador")
         output = io.StringIO()
+        linhas_exportadas = 0
 
         for doc in despesas:
             # C. Credora (Banco/Fonte - diminui o ativo)
@@ -135,6 +136,13 @@ class ExportadorService:
             
             linha = f"{part_0},{part_1},{part_2},{part_3},{part_4},{part_5},{part_6},\n"
             output.write(linha)
+            linhas_exportadas += 1
+
+        if linhas_exportadas == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Não há lançamentos aptos para exportação. Verifique se a Fonte Pagadora e as Contas de Despesa possuem código contábil vinculado ao Plano de Contas."
+            )
             
         return output.getvalue().encode("cp1252", errors="replace")
 

@@ -64,6 +64,57 @@ class TestExportacaoLoteNomeArquivo(unittest.IsolatedAsyncioTestCase):
         expected_disposition = 'attachment; filename="habita-administradora_condominio-residencial-parque_10-2026.txt"'
         self.assertEqual(response.headers.get("Content-Disposition"), expected_disposition)
 
+    def test_gerar_lote_us42_bloqueia_quando_partida_dobrada_incompleta(self):
+        """Valida que gerar_lote_us42 lança HTTPException 400 se nenhum lançamento possuir partida dobrada completa."""
+        from fastapi import HTTPException
+        from src.services.exportador_service import ExportadorService
+
+        mock_supabase = MagicMock()
+        service = ExportadorService(mock_supabase)
+        
+        # Simula obter_preview_us42 retornando lançamentos sem conta_cred (ex: fonte sem plano_conta_id)
+        service.obter_preview_us42 = MagicMock(return_value=[
+            {
+                "id": "doc-1",
+                "fornecedor": "Fornecedor Teste",
+                "data_pagamento": "2026-09-01",
+                "valor_total": 100.0,
+                "conta_deb": "197",
+                "conta_cred": "", # Faltando conta credora!
+                "competencia": "09/2026"
+            }
+        ])
+
+        with self.assertRaises(HTTPException) as ctx:
+            service.gerar_lote_us42("condo-123", "2026-09")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Não há lançamentos aptos para exportação", ctx.exception.detail)
+
+    def test_gerar_lote_us42_sucesso_quando_partida_dobrada_completa(self):
+        """Valida a geração correta do lote em cp1252 quando as contas de débito e crédito estão configuradas."""
+        from src.services.exportador_service import ExportadorService
+
+        mock_supabase = MagicMock()
+        service = ExportadorService(mock_supabase)
+        
+        service.obter_preview_us42 = MagicMock(return_value=[
+            {
+                "id": "doc-1",
+                "fornecedor": "Ifood Benefícios",
+                "data_pagamento": "2026-09-01",
+                "valor_total": 1750.0,
+                "descricao": "Ticket alimentação",
+                "conta_deb": "197",
+                "conta_cred": "019",
+                "competencia": "09/2026"
+            }
+        ])
+
+        bytes_lote = service.gerar_lote_us42("condo-123", "2026-09")
+        texto = bytes_lote.decode("cp1252")
+        self.assertIn("019,197,01/09/2026,09/2026", texto)
+        self.assertIn("175000", texto)
+
 
 if __name__ == "__main__":
     unittest.main()
