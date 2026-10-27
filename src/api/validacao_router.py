@@ -118,7 +118,7 @@ async def listar_despesas(
 
     query = (
         supabase.table("despesas")
-        .select("id, filename, administradora_id, condominio_id, status, fornecedor, valor_total, data_emissao, data_pagamento, numero_doc, criado_em, extraido_em, competencia, fonte_pagadora_id, plano_contas!conta_despesa_id(codigo_contabil, descricao)")
+        .select("id, filename, administradora_id, condominio_id, status, fornecedor, valor_total, data_emissao, data_pagamento, numero_doc, criado_em, extraido_em, competencia, fonte_pagadora_id, sugestao_contabil, plano_contas!conta_despesa_id(codigo_contabil, descricao)")
     )
 
     if condominio_id:
@@ -196,8 +196,9 @@ async def listar_despesas(
             
     for d in docs:
         c_dev = d.get("plano_contas") or {}
-        d["conta_devedora_codigo"] = c_dev.get("codigo_contabil")
-        d["conta_devedora_descricao"] = c_dev.get("descricao")
+        sug = d.get("sugestao_contabil") or {}
+        d["conta_devedora_codigo"] = c_dev.get("codigo_contabil") or sug.get("conta_debito_codigo")
+        d["conta_devedora_descricao"] = c_dev.get("descricao") or sug.get("conta_debito_nome")
         d.pop("plano_contas", None)
         
         # map conta_credora (which uses fonte_pagadora_id)
