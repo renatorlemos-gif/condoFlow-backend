@@ -301,6 +301,7 @@ async def despesas_disponiveis(
             d for d in docs
             if q_lower in (d.get("fornecedor") or "").lower()
             or q_lower in (d.get("numero_doc") or "").lower()
+            or q_lower in (d.get("descricao") or "").lower()
         ]
 
     return docs
