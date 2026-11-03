@@ -236,16 +236,17 @@ async def detalhe_despesa(despesa_id: str):
 
     doc = result.data
 
-    # Gera URL assinada da foto (válida por 1 hora)
+    # Gera URL assinada da foto (válida por 1 hora) se houver arquivo físico no storage
     foto_url = None
-    try:
-        bucket = doc.get("bucket", os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "integre"))
-        signed = supabase.storage.from_(bucket).create_signed_url(
-            doc["storage_path"], expires_in=3600
-        )
-        foto_url = signed.get("signedURL") or signed.get("signedUrl")
-    except Exception:
-        pass  # foto não disponível, mas não quebra o fluxo
+    if doc.get("storage_path"):
+        try:
+            bucket = doc.get("bucket", os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "integre"))
+            signed = supabase.storage.from_(bucket).create_signed_url(
+                doc["storage_path"], expires_in=3600
+            )
+            foto_url = signed.get("signedURL") or signed.get("signedUrl")
+        except Exception:
+            pass  # foto não disponível, mas não quebra o fluxo
 
     return DespesaDetalhe(
         id=doc["id"],
@@ -682,7 +683,9 @@ async def scan_qr_code(despesa_id: str):
         raise HTTPException(status_code=404, detail="Despesa não encontrado.")
 
     doc = result.data
-    storage_path = doc["storage_path"]
+    storage_path = doc.get("storage_path")
+    if not storage_path:
+        raise HTTPException(status_code=400, detail="Despesa não possui arquivo físico no storage.")
     bucket = doc.get("bucket", os.environ.get("SUPABASE_BUCKET_CONDOMINIOS", "integre"))
 
     # Baixa o arquivo do Supabase Storage
