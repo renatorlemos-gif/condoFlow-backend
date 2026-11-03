@@ -183,7 +183,6 @@ async def listar_transacoes(
     query = (
         supabase.table("transacoes_extrato")
         .select("*")
-        .eq("metadados->>categoria", "Outros Gastos")
         .order("data_transacao", desc=True)
         .limit(limit)
     )
@@ -216,52 +215,6 @@ async def listar_transacoes(
                 conciliacoes_por_trans[tid] = []
             conciliacoes_por_trans[tid].append(c)
 
-    docs_result = (
-        supabase.table("despesas")
-        .select("id, fornecedor, numero_doc, data_emissao, valor_total, data_pagamento, data_vencimento")
-        .eq("status", "validado")
-        .execute()
-    )
-    docs_disponiveis = docs_result.data or []
-
-    # Get already conciliados docs to remove from suggestions
-    all_conc = supabase.table("conciliacoes").select("despesa_id").execute().data or []
-    docs_ja_conciliados = {c.get("despesa_id") for c in all_conc}
-    docs_livres = [d for d in docs_disponiveis if d["id"] not in docs_ja_conciliados]
-
-    # Pre-calcula todas as sugestões possíveis para fazer um 'greedy match'
-    # Evita que o mesmo despesa seja sugerido para duas transações
-    pares_possiveis = []
-    for trans in transacoes:
-        # Pula as já conciliadas
-        if trans["id"] in conciliacoes_por_trans:
-            continue
-        
-        for doc in docs_livres:
-            score = _calcular_score(trans, doc)
-            if score >= 0.6:
-                pares_possiveis.append((score, trans["id"], doc))
-
-    # Ordena pelo maior score primeiro
-    pares_possiveis.sort(key=lambda x: x[0], reverse=True)
-
-    sugestoes_por_trans = {}
-    docs_sugeridos = set()
-
-    for score, t_id, doc in pares_possiveis:
-        if t_id not in sugestoes_por_trans and doc["id"] not in docs_sugeridos:
-            sugestoes_por_trans[t_id] = DespesaSugestao(
-                id=doc["id"],
-                fornecedor=doc.get("fornecedor"),
-                numero_doc=doc.get("numero_doc"),
-                data_emissao=doc.get("data_emissao"),
-                valor_total=doc.get("valor_total"),
-                data_pagamento=doc.get("data_pagamento"),
-                data_vencimento=doc.get("data_vencimento"),
-                score=score,
-            )
-            docs_sugeridos.add(doc["id"])
-
     resultado = []
     for trans in transacoes:
         concs = conciliacoes_por_trans.get(trans["id"], [])
@@ -289,7 +242,8 @@ async def listar_transacoes(
                     lote_id = trans["id"]
                 
             trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco"]}
-            trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
+            cat_raw = (trans.get("metadados") or {}).get("categoria")
+            trans_dict["categoria"] = str(cat_raw).strip() if cat_raw and str(cat_raw).strip() else "Sem Categoria"
             
             resultado.append(TransacaoComSugestao(
                 **trans_dict,
@@ -299,15 +253,15 @@ async def listar_transacoes(
                 lote_id=lote_id if is_lote else None,
             ))
         else:
-            sugestao = sugestoes_por_trans.get(trans["id"])
             trans_dict = {k: trans.get(k) for k in ["id","data_transacao","descricao","valor","tipo","banco"]}
-            trans_dict["categoria"] = (trans.get("metadados") or {}).get("categoria")
+            cat_raw = (trans.get("metadados") or {}).get("categoria")
+            trans_dict["categoria"] = str(cat_raw).strip() if cat_raw and str(cat_raw).strip() else "Sem Categoria"
             
             resultado.append(TransacaoComSugestao(
                 **trans_dict,
                 despesas_conciliados=[],
-                status_conciliacao="sugerida" if sugestao else "pendente",
-                sugestao=sugestao,
+                status_conciliacao="pendente",
+                sugestao=None,
                 lote_id=None,
             ))
 

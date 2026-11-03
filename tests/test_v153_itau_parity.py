@@ -266,7 +266,7 @@ class TestV153ItauParity(unittest.TestCase):
     # US-05: Blindagem da Conciliação Bancária (_salvar_transacoes)
     # =========================================================================
     def test_us05_cenario01_insercao_exclusiva_outros_gastos(self):
-        """Cenário 01: Inserção exclusiva de transações 'Outros Gastos' no Supabase."""
+        """Cenário 01: Na v1.58, todas as movimentações da amostra real são inseridas (9 registros)."""
         df, _, _ = processar_extrato_itau_bytes(self.csv_amostra_real, "itau.csv")
 
         # Mock do cliente Supabase para testar a persistência
@@ -285,23 +285,21 @@ class TestV153ItauParity(unittest.TestCase):
                 fonte_pagadora_id="fp-123"
             )
 
-        # Na amostra real temos exatamente 4 registros em Outros Gastos:
-        # BOLETO PAGO ENEL, PIX ENVIADO SILVANDIRA, SISPAG CONCESSIONARIA, RSHOP CIDEAALMADA
-        self.assertEqual(qtd, 4)
+        # Na v1.58 todas as 9 movimentações da amostra real são salvas (Outros Gastos, Tarifas, Receitas, etc.)
+        self.assertEqual(qtd, 9)
         args, kwargs = mock_table.insert.call_args
         registros_inseridos = args[0]
-        self.assertEqual(len(registros_inseridos), 4)
+        self.assertEqual(len(registros_inseridos), 9)
 
         for reg in registros_inseridos:
-            self.assertEqual(reg["metadados"], {"categoria": "Outros Gastos"})
-            self.assertEqual(reg["tipo"], "debito")
+            self.assertIn("categoria", reg["metadados"])
             self.assertEqual(reg["banco"], "itau")
             self.assertEqual(reg["administradora_id"], "adm-alpha")
             self.assertEqual(reg["condominio_id"], "condo-alpha-01")
             self.assertEqual(reg["fonte_pagadora_id"], "fp-123")
 
     def test_us05_cenario02_bloqueio_receitas_tarifas_investimentos(self):
-        """Cenário 02: Bloqueio estrito de inserção para receitas, investimentos e tarifas."""
+        """Cenário 02: Na v1.58, receitas, tarifas e investimentos também são inseridos."""
         df, _, _ = processar_extrato_itau_bytes(self.csv_amostra_real, "itau.csv")
 
         # Verifica que o DataFrame possui diversas categorias além de Outros Gastos
@@ -325,11 +323,9 @@ class TestV153ItauParity(unittest.TestCase):
         inseridos = args[0]
         descricoes = [r["descricao"] for r in inseridos]
 
-        self.assertFalse(any("BOLETOS RECEBIDOS" in d for d in descricoes))
-        self.assertFalse(any("REND PAGO" in d for d in descricoes))
-        self.assertFalse(any("APLICACAO CDB" in d for d in descricoes))
-        self.assertFalse(any("RESG AUT" in d for d in descricoes))
-        self.assertFalse(any("TAR/CUSTAS" in d for d in descricoes))
+        # Na v1.58 todas as movimentações agora são inseridas com suas categorias
+        self.assertTrue(any("BOLETOS RECEBIDOS" in d for d in descricoes))
+        self.assertTrue(any("TAR/CUSTAS" in d for d in descricoes))
 
     def test_us05_cenario03_formatacao_data_iso_postgres(self):
         """Cenário 03: Preservação de integridade de data no formato ISO YYYY-MM-DD para o PostgreSQL."""
