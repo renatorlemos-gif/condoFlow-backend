@@ -19,6 +19,8 @@ from supabase import create_client
 
 router = APIRouter(prefix="/api/v1/validacao", tags=["Validação"])
 
+FEATURE_APRENDER_COM_VALIDACAO = os.getenv("FEATURE_APRENDER_COM_VALIDACAO", "false").lower() == "true"
+
 
 def _get_supabase():
     url = os.environ.get("SUPABASE_URL")
@@ -576,13 +578,22 @@ async def _validar_despesa_impl(despesa_id: str, payload: ValidacaoPayload, back
 
         if admin_id and desc_doc:
             if houve_troca_manual:
-                # Dispara background task para o aprendizado contínuo
-                background_tasks.add_task(
-                    _aprender_com_validacao,
-                    admin_id=admin_id,
-                    conta_despesa_id=conta_despesa_id,
-                    contexto_despesa=desc_doc
-                )
+                if FEATURE_APRENDER_COM_VALIDACAO:
+                    # Dispara background task para o aprendizado contínuo
+                    background_tasks.add_task(
+                        _aprender_com_validacao,
+                        admin_id=admin_id,
+                        conta_despesa_id=conta_despesa_id,
+                        contexto_despesa=desc_doc
+                    )
+                else:
+                    import logging
+                    logger = logging.getLogger("validacao_router")
+                    logger.info(
+                        f"[Validacao] Houve troca manual para conta {conta_despesa_id}, "
+                        f"mas o aprendizado contínuo está inativado (FEATURE_APRENDER_COM_VALIDACAO=False). "
+                        f"Ignorando atualização semântica."
+                    )
             else:
                 import logging
                 logger = logging.getLogger("validacao_router")

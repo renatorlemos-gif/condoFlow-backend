@@ -56,12 +56,19 @@ app.add_middleware(
 # ------------------------------------------------------------------ #
 #  Routers                                                            #
 # ------------------------------------------------------------------ #
+FEATURE_BALANCETES_ENABLED = os.getenv("FEATURE_BALANCETES_ENABLED", "false").lower() == "true"
+
 app.include_router(despesa_router)
 app.include_router(validacao_router)
 app.include_router(conciliacao_router)
 app.include_router(contexto_router)
 app.include_router(plano_contas_router)
-app.include_router(balancete_router)
+
+if FEATURE_BALANCETES_ENABLED:
+    app.include_router(balancete_router)
+else:
+    logger.info("Modulo de Balancetes Historicos inativo (FEATURE_BALANCETES_ENABLED=False). Rotas nao registradas.")
+
 app.include_router(classificacao_router)
 app.include_router(exportacao_router)
 app.include_router(cadastros_router)
